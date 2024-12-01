@@ -1,0 +1,6 @@
+export const HapticPatterns = {
+  COMBO_ACTIVATE: [100, 50, 100, 50, 200],
+  COMBO_SPEED_SHIELD: [50, 100, 50, 100, 50],
+  COMBO_MAGNET_GRAVITY: [20, 20, 20, 100, 100],
+  COMBO_TELEPORT_SPLIT: [200, 50, 200]
+}; 
