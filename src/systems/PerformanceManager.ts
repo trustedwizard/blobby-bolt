@@ -59,6 +59,13 @@ class PriorityQueue<T extends UpdateEvent> {
   }
 }
 
+interface Viewport {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export class PerformanceManager {
   private static instance: PerformanceManager;
   private spatialHash: SpatialHash;
@@ -69,8 +76,35 @@ export class PerformanceManager {
   private memoryManager: MemoryManager;
   private advancedState: AdvancedOptimizationState;
   private updateQueue: PriorityQueue<UpdateEvent>;
+  private isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  private mobileSettings = {
+    maxParticles: 50,
+    trailLength: 10,
+    renderDistance: 1000,
+    maxVisibleBlobs: 20,
+    updateInterval: 50
+  };
+
+  private desktopSettings = {
+    maxParticles: 200,
+    trailLength: 20,
+    renderDistance: 2000,
+    maxVisibleBlobs: 50,
+    updateInterval: 16
+  };
+
+  private readonly renderer: PIXI.Renderer;
+  private settings: {
+    maxParticles: number;
+    trailLength: number;
+    renderDistance: number;
+    maxVisibleBlobs: number;
+    updateInterval: number;
+  };
+  private updateInterval: number;
 
   private constructor(renderer: PIXI.Renderer) {
+    this.renderer = renderer;
     this.spatialHash = new SpatialHash(200);
     this.memoryManager = MemoryManager.getInstance();
     this.cullingSystem = new CullingSystem();
@@ -110,6 +144,14 @@ export class PerformanceManager {
       networkThrottling: false,
       adaptiveQuality: true
     };
+
+    // Initialize settings based on device
+    this.settings = this.isMobile ? this.mobileSettings : this.desktopSettings;
+    this.updateInterval = this.settings.updateInterval;
+    
+    if (this.isMobile) {
+      this.optimizeForMobile();
+    }
   }
 
   public static getInstance(renderer: PIXI.Renderer): PerformanceManager {
@@ -340,5 +382,36 @@ export class PerformanceManager {
       this.advancedState.networkThrottling = false;
       this.optimizationState.renderQuality = 'high';
     }
+  }
+
+  private optimizeForMobile() {
+    // Reduce visual effects
+    if (this.renderer) {
+      this.renderer.resolution = 1;
+      
+      // Optimize WebGL settings
+      this.renderer.options.antialias = false;
+      this.renderer.options.resolution = 1;
+      this.renderer.options.powerPreference = 'low-power';
+    }
+
+    // Reduce update frequency
+    this.updateInterval = this.mobileSettings.updateInterval;
+  }
+
+  public getVisibleObjectsBasic<T extends { x: number; y: number }>(
+    objects: T[],
+    viewport: Viewport
+  ): T[] {
+    const maxVisible = this.settings.maxVisibleBlobs;
+    const renderDistance = this.settings.renderDistance;
+
+    return objects
+      .filter(obj => {
+        const dx = obj.x - viewport.x;
+        const dy = obj.y - viewport.y;
+        return Math.hypot(dx, dy) <= renderDistance;
+      })
+      .slice(0, maxVisible);
   }
 } 

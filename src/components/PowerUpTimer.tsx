@@ -2,17 +2,21 @@ import React from 'react';
 import { motion } from 'framer-motion';
 
 interface PowerUpTimerProps {
+  id: string;
   type: string;
   timeRemaining: number;
   duration: number;
   icon: string;
+  compact?: boolean;
 }
 
 export const PowerUpTimer: React.FC<PowerUpTimerProps> = ({
+  id,
   type,
   timeRemaining,
   duration,
-  icon
+  icon,
+  compact
 }) => {
   const progress = Math.max(0, Math.min(100, (timeRemaining / duration) * 100));
 

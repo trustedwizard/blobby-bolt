@@ -5,6 +5,7 @@ export interface HUDState {
   ping: number;
   activePowerUps: PowerUpDisplay[];
   leaderboard: LeaderboardEntry[];
+  isExpanded: boolean;
 }
 
 export interface PowerUpDisplay {

@@ -7,7 +7,11 @@ import { MiniMap } from './MiniMap';
 import { HUDState } from '../types/hud';
 import { PerformanceMonitor } from '../utils/performance';
 
-export const GameHUD: React.FC = () => {
+interface GameHUDProps {
+  isMobile: boolean;
+}
+
+export const GameHUD: React.FC<GameHUDProps> = ({ isMobile }) => {
   const { player, activePowerUps, blobs, viewport, socket } = useGameStore();
   const [hudState, setHudState] = useState<HUDState>({
     score: 0,
@@ -15,7 +19,8 @@ export const GameHUD: React.FC = () => {
     fps: 60,
     ping: 0,
     activePowerUps: [],
-    leaderboard: []
+    leaderboard: [],
+    isExpanded: false
   });
 
   useEffect(() => {
@@ -80,33 +85,49 @@ export const GameHUD: React.FC = () => {
 
   return (
     <div className="fixed inset-0 pointer-events-none">
-      <div className="absolute top-4 left-4">
-        <StatsDisplay {...hudState} />
+      <div className={`absolute top-4 left-4 ${isMobile ? 'scale-75 origin-top-left' : ''}`}>
+        <StatsDisplay {...hudState} compact={isMobile} />
       </div>
 
-      <div className="absolute top-4 right-4">
-        <Leaderboard entries={hudState.leaderboard} />
-      </div>
+      {(!isMobile || hudState.isExpanded) && (
+        <div className={`absolute top-4 right-4 ${isMobile ? 'scale-75 origin-top-right' : ''}`}>
+          <Leaderboard entries={hudState.leaderboard} compact={isMobile} />
+        </div>
+      )}
 
-      <div className="absolute bottom-4 left-4">
+      <div className={`absolute bottom-4 left-4 ${isMobile ? 'scale-75 origin-bottom-left' : ''}`}>
         <div className="flex flex-col gap-2">
           {hudState.activePowerUps.map(powerUp => (
-            <PowerUpTimer key={powerUp.id} {...powerUp} />
+            <PowerUpTimer 
+              key={powerUp.id} 
+              {...powerUp} 
+              compact={isMobile}
+            />
           ))}
         </div>
       </div>
 
-      <div className="absolute bottom-4 right-4">
-        <MiniMap
-          playerPosition={player ? { x: player.x, y: player.y } : { x: 0, y: 0 }}
-          visiblePlayers={blobs.map(b => ({
-            x: b.x,
-            y: b.y,
-            color: b.color
+      {!isMobile && (
+        <div className="absolute bottom-4 right-4">
+          <MiniMap
+            playerPosition={player ? { x: player.x, y: player.y } : { x: 0, y: 0 }}
+            visiblePlayers={blobs}
+            viewport={viewport}
+          />
+        </div>
+      )}
+
+      {isMobile && (
+        <button
+          className="absolute top-4 right-4 bg-black/50 rounded-full p-2"
+          onClick={() => setHudState(state => ({ 
+            ...state, 
+            isExpanded: !state.isExpanded 
           }))}
-          viewport={viewport}
-        />
-      </div>
+        >
+          {hudState.isExpanded ? 'Collapse' : 'Expand'}
+        </button>
+      )}
     </div>
   );
 }; 

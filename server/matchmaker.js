@@ -1,217 +1,370 @@
-export function createMatchmaker(config) {
-  const queue = new Map();
-  const activeMatches = new Map();
-  const minPlayersToStart = 2;
-  const regions = ['NA', 'EU', 'ASIA', 'SA', 'OCE'];
+import { EventEmitter } from 'events';
 
-  function findMatch(player) {
-    const matches = [];
-    const now = Date.now();
-    let timeInQueue = now - player.queueStartTime;
-    let expandedSkillRange = Math.min(2000, config.skillRange + Math.floor(timeInQueue / 10000) * 100);
+export class Matchmaker extends EventEmitter {
+  constructor(io) {
+    super();
+    this.io = io;
+    this.rooms = new Map();
+    this.playerRooms = new Map(); // Track which room each player is in
+    this.queuedPlayers = new Map(); // Players waiting for match
     
-    for (const [_, queuedPlayer] of queue) {
-      if (isCompatibleMatch(player, queuedPlayer, expandedSkillRange)) {
-        matches.push(queuedPlayer);
-      }
-      
-      if (matches.length >= config.maxPlayersPerGame - 1) break;
-    }
-
-    if (matches.length >= minPlayersToStart - 1) {
-      createGame([player, ...matches]);
-    } else {
-      // Notify player about queue status
-      player.socket.emit('matchmaking:status', 
-        `Players needed: ${minPlayersToStart - matches.length - 1}`);
-    }
-  }
-
-  function isCompatibleMatch(player1, player2, skillRange) {
-    const skillDiff = Math.abs(player1.skillLevel - player2.skillLevel);
-    const sameRegion = !player1.preferences.region || 
-                      !player2.preferences.region || 
-                      player1.preferences.region === player2.preferences.region;
-    const sameGameMode = player1.preferences.gameMode === player2.preferences.gameMode;
-    
-    return skillDiff <= skillRange && sameRegion && sameGameMode;
-  }
-
-  function balanceTeams(players) {
-    // Sort players by skill level
-    players.sort((a, b) => b.skillLevel - a.skillLevel);
-    
-    const teams = [[], []];
-    let teamIndex = 0;
-    
-    // Distribute players in snake draft order
-    players.forEach(player => {
-      teams[teamIndex].push(player);
-      teamIndex = (teamIndex + 1) % 2;
-    });
-    
-    // Flatten and return balanced teams
-    return teams[0].concat(teams[1]);
-  }
-
-  function createGame(players) {
-    const gameId = `game-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Balance teams if needed
-    if (players[0].preferences.gameMode === 'teams') {
-      players = balanceTeams(players);
-    }
-    
-    // Remove players from queue
-    players.forEach(p => queue.delete(p.id));
-    
-    // Create game room
-    const teams = players[0].preferences.gameMode === 'teams' ? [
-      { id: 'team1', name: 'Red Team', color: 0xff0000, players: [] },
-      { id: 'team2', name: 'Blue Team', color: 0x0000ff, players: [] }
-    ] : [];
-
-    const game = {
-      id: gameId,
-      players: new Set(players.map(p => p.id)),
-      teams,
-      gameMode: players[0].preferences.gameMode,
-      startTime: Date.now(),
-      state: 'starting'
+    // Configuration
+    this.config = {
+      modes: {
+        FFA: {
+          name: 'Free For All',
+          minPlayers: 1,
+          maxPlayers: 50,
+          autoStart: true,
+          teamBased: false
+        },
+        TEAMS: {
+          name: 'Teams',
+          minPlayers: 4,
+          maxPlayers: 40,
+          teamSize: 2,
+          autoStart: true,
+          teamBased: true,
+          balanceTeams: true
+        },
+        BATTLE_ROYALE: {
+          name: 'Battle Royale',
+          minPlayers: 10,
+          maxPlayers: 100,
+          autoStart: true,
+          shrinkMap: true,
+          teamBased: false
+        }
+      },
+      matchmakingInterval: 5000, // 5 seconds
+      roomCleanupInterval: 30000, // 30 seconds
+      maxQueueTime: 60000, // 1 minute
+      skillMatchingRange: 200, // Initial ELO range for matching
+      expandingSkillRange: 50, // How much to expand range per check
+      maxSkillRange: 500 // Maximum ELO difference allowed
     };
+
+    // Start background processes
+    this.startMatchmaking();
+    this.startRoomCleanup();
+  }
+
+  startMatchmaking() {
+    setInterval(() => {
+      this.processQueue();
+    }, this.config.matchmakingInterval);
+  }
+
+  startRoomCleanup() {
+    setInterval(() => {
+      this.cleanupRooms();
+    }, this.config.roomCleanupInterval);
+  }
+
+  createRoom(mode = 'FFA', options = {}) {
+    const roomId = `room-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const modeConfig = this.config.modes[mode];
     
-    // Assign teams if team mode
-    if (game.gameMode === 'teams') {
-      players.forEach((p, i) => {
-        const teamIndex = Math.floor(i % 2);
-        game.teams[teamIndex].players.push(p.id);
+    if (!modeConfig) {
+      throw new Error(`Invalid game mode: ${mode}`);
+    }
+
+    const room = {
+      id: roomId,
+      mode,
+      players: new Map(),
+      teams: modeConfig.teamBased ? new Map() : null,
+      state: 'waiting', // waiting, starting, active, ending
+      createdAt: Date.now(),
+      startTime: null,
+      endTime: null,
+      settings: {
+        ...modeConfig,
+        ...options
+      },
+      stats: {
+        totalPlayers: 0,
+        maxPlayersReached: 0,
+        averagePlayerTime: 0
+      }
+    };
+
+    this.rooms.set(roomId, room);
+    this.emit('roomCreated', room);
+    return room;
+  }
+
+  addPlayerToQueue(playerId, preferences = {}) {
+    const queueEntry = {
+      playerId,
+      preferences,
+      joinTime: Date.now(),
+      skill: preferences.skill || 1500, // Default ELO
+      expandedRange: 0
+    };
+
+    this.queuedPlayers.set(playerId, queueEntry);
+    this.emit('playerQueued', queueEntry);
+    
+    return queueEntry;
+  }
+
+  removePlayerFromQueue(playerId) {
+    const wasQueued = this.queuedPlayers.delete(playerId);
+    if (wasQueued) {
+      this.emit('playerDequeued', playerId);
+    }
+    return wasQueued;
+  }
+
+  processQueue() {
+    // Sort queued players by wait time
+    const sortedPlayers = Array.from(this.queuedPlayers.values())
+      .sort((a, b) => a.joinTime - b.joinTime);
+
+    for (const player of sortedPlayers) {
+      if (!this.queuedPlayers.has(player.playerId)) continue; // Player may have been matched already
+
+      const match = this.findMatch(player);
+      if (match) {
+        this.assignPlayerToRoom(player.playerId, match.id);
+      } else {
+        // Expand skill range for players waiting too long
+        const waitTime = Date.now() - player.joinTime;
+        if (waitTime > this.config.maxQueueTime) {
+          player.expandedRange += this.config.expandingSkillRange;
+        }
+      }
+    }
+  }
+
+  findMatch(player) {
+    const { mode = 'FFA' } = player.preferences;
+    
+    // First try to find a suitable existing room
+    for (const [roomId, room] of this.rooms) {
+      if (this.isRoomSuitableForPlayer(room, player)) {
+        return room;
+      }
+    }
+
+    // Create new room if no suitable room found
+    if (this.canCreateRoom(mode)) {
+      return this.createRoom(mode, player.preferences);
+    }
+
+    return null;
+  }
+
+  isRoomSuitableForPlayer(room, player) {
+    if (room.state !== 'waiting' && room.state !== 'starting') return false;
+    if (room.players.size >= room.settings.maxPlayers) return false;
+    if (room.settings.mode !== player.preferences.mode) return false;
+
+    // Check skill range if skill-based matchmaking is enabled
+    if (room.settings.skillBased) {
+      const roomAvgSkill = this.calculateRoomAverageSkill(room);
+      const skillDiff = Math.abs(roomAvgSkill - player.skill);
+      const maxRange = this.config.skillMatchingRange + player.expandedRange;
+      
+      if (skillDiff > maxRange) return false;
+    }
+
+    return true;
+  }
+
+  calculateRoomAverageSkill(room) {
+    if (room.players.size === 0) return 1500;
+    
+    const totalSkill = Array.from(room.players.values())
+      .reduce((sum, player) => sum + (player.skill || 1500), 0);
+    
+    return totalSkill / room.players.size;
+  }
+
+  canCreateRoom(mode) {
+    const activeRooms = Array.from(this.rooms.values())
+      .filter(room => room.mode === mode && room.state !== 'ending');
+    
+    // Implement room creation limits based on active players and server load
+    return activeRooms.length < 10; // Example limit
+  }
+
+  assignPlayerToRoom(playerId, roomId) {
+    const room = this.rooms.get(roomId);
+    const player = this.queuedPlayers.get(playerId);
+    
+    if (!room || !player) return false;
+
+    // Remove from queue
+    this.removePlayerFromQueue(playerId);
+
+    // Add to room
+    room.players.set(playerId, {
+      id: playerId,
+      joinTime: Date.now(),
+      skill: player.skill,
+      team: null
+    });
+
+    // Assign team if needed
+    if (room.settings.teamBased) {
+      this.assignPlayerToTeam(room, playerId);
+    }
+
+    // Track player's room
+    this.playerRooms.set(playerId, roomId);
+
+    // Update room stats
+    room.stats.totalPlayers++;
+    room.stats.maxPlayersReached = Math.max(room.stats.maxPlayersReached, room.players.size);
+
+    // Check if room should start
+    this.checkRoomStart(room);
+
+    this.emit('playerJoinedRoom', { playerId, roomId });
+    return true;
+  }
+
+  assignPlayerToTeam(room, playerId) {
+    if (!room.teams) return;
+
+    // Find the team with the fewest players
+    let smallestTeam = null;
+    let smallestSize = Infinity;
+
+    for (const [teamId, team] of room.teams) {
+      if (team.players.size < smallestSize) {
+        smallestTeam = teamId;
+        smallestSize = team.players.size;
+      }
+    }
+
+    // Create new team if needed
+    if (!smallestTeam || smallestSize >= room.settings.teamSize) {
+      smallestTeam = `team-${room.teams.size + 1}`;
+      room.teams.set(smallestTeam, {
+        id: smallestTeam,
+        players: new Set(),
+        score: 0
       });
     }
-    
-    activeMatches.set(gameId, game);
-    
-    // Notify players and create room
-    players.forEach(p => {
-      p.socket.join(gameId);
-      p.socket.emit('matchmaking:found', gameId);
-    });
 
-    // Add collision system initialization for new game
-    const gameCollisionSystem = new CollisionSystem(config.worldSize);
-    game.collisionSystem = gameCollisionSystem;
-    
-    // Add collision check interval for this game
-    const collisionInterval = setInterval(() => {
-      if (game.state !== 'active') {
-        clearInterval(collisionInterval);
-        return;
-      }
-      
-      // Get all entities in this game
-      const entities = [
-        ...Array.from(gameState.players.values()).filter(p => game.players.has(p.id)),
-        ...aiSystem.getAIBlobs()
-      ];
-      
-      // Check collisions for this game
-      const collisions = game.collisionSystem.checkCollisions(entities, foodSystem);
-      
-      // Resolve collisions
-      if (collisions.length > 0) {
-        game.collisionSystem.resolveCollisions(collisions, {
-          foodSystem,
-          aiSystem,
-          players: gameState.players,
-          io: config.io.to(gameId)
-        });
-      }
-    }, 50);
-    
-    // Store interval for cleanup
-    game.intervals = game.intervals || [];
-    game.intervals.push(collisionInterval);
-    
-    // Start game after delay
-    setTimeout(() => {
-      if (activeMatches.has(gameId)) {
-        game.state = 'active';
-        config.io.to(gameId).emit('game:start', game);
-      }
-    }, 3000);
+    // Assign player to team
+    room.teams.get(smallestTeam).players.add(playerId);
+    room.players.get(playerId).team = smallestTeam;
   }
 
-  function updatePlayerSkill(playerId, gameResult) {
-    const player = queue.get(playerId);
-    if (!player) return;
+  removePlayerFromRoom(playerId) {
+    const roomId = this.playerRooms.get(playerId);
+    if (!roomId) return false;
 
-    const K_FACTOR = 32;
-    const expectedScore = 1 / (1 + Math.pow(10, (gameResult.opponentSkill - player.skillLevel) / 400));
-    const actualScore = gameResult.won ? 1 : 0;
-    
-    player.skillLevel += K_FACTOR * (actualScore - expectedScore);
-  }
+    const room = this.rooms.get(roomId);
+    if (!room) return false;
 
-  // Add activity tracking
-  function updatePlayerActivity(playerId) {
-    const player = queue.get(playerId);
-    if (player) {
-      player.lastActivity = Date.now();
+    // Remove from team if needed
+    if (room.teams && room.players.get(playerId)?.team) {
+      const teamId = room.players.get(playerId).team;
+      room.teams.get(teamId)?.players.delete(playerId);
     }
+
+    // Remove player
+    room.players.delete(playerId);
+    this.playerRooms.delete(playerId);
+
+    // Update room state
+    this.checkRoomEnd(room);
+
+    this.emit('playerLeftRoom', { playerId, roomId });
+    return true;
   }
 
-  // Add cleanup interval
-  setInterval(() => {
-    // Remove inactive players from queue
-    for (const [playerId, player] of queue.entries()) {
-      if (Date.now() - player.lastActivity > config.matchTimeout) {
-        queue.delete(playerId);
-        player.socket.emit('matchmaking:error', 'Matchmaking timeout');
-      }
-    }
-  }, 10000); // Check every 10 seconds
+  checkRoomStart(room) {
+    if (room.state !== 'waiting') return;
 
-  return {
-    addToQueue(player) {
-      player.queueStartTime = Date.now();
-      queue.set(player.id, player);
-      
-      // Initial status update
-      player.socket.emit('matchmaking:status', 'Searching for players...');
-      
-      // Set queue timeout
+    const shouldStart = room.settings.autoStart && 
+      room.players.size >= room.settings.minPlayers;
+
+    if (shouldStart) {
+      room.state = 'starting';
+      room.startTime = Date.now();
+      this.emit('roomStarting', room);
+
+      // Start game after short delay
       setTimeout(() => {
-        if (queue.has(player.id)) {
-          queue.delete(player.id);
-          player.socket.emit('matchmaking:error', 'Match finding timeout');
+        if (room.state === 'starting') {
+          room.state = 'active';
+          this.emit('roomStarted', room);
         }
-      }, config.matchTimeout);
-      
-      findMatch(player);
-    },
-    
-    removeFromQueue(playerId) {
-      queue.delete(playerId);
-    },
-    
-    getActiveMatches() {
-      return activeMatches;
-    },
-
-    updatePlayerSkill,
-    
-    getRegions() {
-      return regions;
-    },
-
-    getQueueStats() {
-      return {
-        playersInQueue: queue.size,
-        activeGames: activeMatches.size,
-        queuedGameModes: Array.from(queue.values()).reduce((acc, player) => {
-          acc[player.preferences.gameMode] = (acc[player.preferences.gameMode] || 0) + 1;
-          return acc;
-        }, {})
-      };
+      }, 3000);
     }
-  };
+  }
+
+  checkRoomEnd(room) {
+    if (room.state !== 'active') return;
+
+    const shouldEnd = room.players.size < room.settings.minPlayers;
+
+    if (shouldEnd) {
+      room.state = 'ending';
+      room.endTime = Date.now();
+      this.emit('roomEnding', room);
+
+      // Clean up room after delay
+      setTimeout(() => {
+        this.rooms.delete(room.id);
+        this.emit('roomClosed', room);
+      }, 5000);
+    }
+  }
+
+  cleanupRooms() {
+    const now = Date.now();
+
+    for (const [roomId, room] of this.rooms) {
+      // Remove empty rooms
+      if (room.players.size === 0) {
+        this.rooms.delete(roomId);
+        this.emit('roomClosed', room);
+        continue;
+      }
+
+      // Remove inactive rooms
+      const inactiveTime = now - (room.endTime || room.startTime || room.createdAt);
+      if (inactiveTime > 3600000) { // 1 hour
+        this.rooms.delete(roomId);
+        this.emit('roomClosed', room);
+        continue;
+      }
+    }
+  }
+
+  getRoomInfo(roomId) {
+    const room = this.rooms.get(roomId);
+    if (!room) return null;
+
+    return {
+      id: room.id,
+      mode: room.mode,
+      state: room.state,
+      playerCount: room.players.size,
+      maxPlayers: room.settings.maxPlayers,
+      teams: room.teams ? Array.from(room.teams.values()) : null,
+      createdAt: room.createdAt,
+      startTime: room.startTime,
+      endTime: room.endTime,
+      stats: room.stats
+    };
+  }
+
+  getPlayerRoom(playerId) {
+    const roomId = this.playerRooms.get(playerId);
+    return roomId ? this.getRoomInfo(roomId) : null;
+  }
+
+  getActiveRooms() {
+    return Array.from(this.rooms.values())
+      .filter(room => room.state !== 'ending')
+      .map(room => this.getRoomInfo(room.id));
+  }
 } 

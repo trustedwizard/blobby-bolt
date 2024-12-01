@@ -3,6 +3,7 @@ import { LeaderboardEntry } from '../types/hud';
 
 interface LeaderboardProps {
   entries: LeaderboardEntry[];
+  compact?: boolean;
 }
 
 export const Leaderboard: React.FC<LeaderboardProps> = ({ entries }) => {

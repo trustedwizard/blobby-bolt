@@ -1,13 +1,17 @@
 import React from 'react';
+import { PowerUpDisplay, LeaderboardEntry } from '../types/hud';
 
 interface StatsDisplayProps {
   score: number;
   rank: number;
   fps: number;
   ping: number;
+  activePowerUps: PowerUpDisplay[];
+  leaderboard: LeaderboardEntry[];
+  compact?: boolean;
 }
 
-export const StatsDisplay: React.FC<StatsDisplayProps> = ({ score, rank, fps, ping }) => {
+export const StatsDisplay: React.FC<StatsDisplayProps> = ({ score, rank, fps, ping, activePowerUps, leaderboard, compact }) => {
   return (
     <div className="bg-black/50 rounded-lg p-4 text-white">
       <div className="flex flex-col gap-2">

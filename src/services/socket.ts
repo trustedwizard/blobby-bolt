@@ -8,6 +8,12 @@ import { MatchPreferences } from '../types/matchmaking';
 
 const SOCKET_URL = 'http://localhost:3001';
 
+interface MatchmakingPreferences {
+  gameMode: 'ffa' | 'teams' | 'battle-royale';
+  region?: string;
+  skillLevel: number;
+}
+
 export class SocketService {
   private static instance: SocketService | null = null;
   private socket: Socket | null = null;
@@ -51,10 +57,10 @@ export class SocketService {
 
     this.socket.on('game:state', (gameState) => {
       useGameStore.setState({
-        blobs: gameState.players,
-        food: new Map(gameState.food),
-        powerUps: gameState.powerUps,
-        leaderboard: gameState.leaderboard
+        blobs: gameState.players || [],
+        food: new Map(gameState.food || []),
+        powerUps: gameState.powerUps || [],
+        leaderboard: gameState.leaderboard || []
       });
     });
 
@@ -94,7 +100,7 @@ export class SocketService {
     // Power-up handlers
     this.socket.on('powerup:spawn', (powerUp: PowerUp) => {
       useGameStore.setState(state => ({
-        powerUps: [...state.powerUps, powerUp]
+        powerUps: Array.isArray(state.powerUps) ? [...state.powerUps, powerUp] : [powerUp]
       }));
     });
 
@@ -135,7 +141,7 @@ export class SocketService {
 
     this.socket.on('powerup:spawn', (powerUp: PowerUp) => {
       useGameStore.setState(state => ({
-        powerUps: [...state.powerUps, powerUp]
+        powerUps: Array.isArray(state.powerUps) ? [...state.powerUps, powerUp] : [powerUp]
       }));
     });
 
@@ -225,7 +231,7 @@ export class SocketService {
     this.socket.on('matchmaking:error', callbacks.onMatchmakingError);
   }
 
-  public findMatch(preferences: { gameMode: string; skillLevel: number }): void {
+  public findMatch(preferences: MatchmakingPreferences): void {
     if (!this.socket?.connected) {
       console.warn('Cannot find match: Socket not connected');
       return;
@@ -243,6 +249,35 @@ export class SocketService {
 
   public getSocket(): Socket | null {
     return this.socket;
+  }
+
+  public createRoom(roomConfig: {
+    name: string;
+    isPrivate: boolean;
+    password?: string;
+    gameMode: 'ffa' | 'teams' | 'battle-royale';
+    maxPlayers: number;
+  }): void {
+    if (!this.socket?.connected) {
+      console.warn('Cannot create room: Socket not connected');
+      return;
+    }
+    
+    const roomId = `room-${Date.now()}`;
+    this.socket.emit('room:create', {
+      ...roomConfig,
+      id: roomId,
+      players: [],
+      teams: roomConfig.gameMode === 'teams' ? [] : undefined
+    });
+  }
+
+  public joinRoom(roomId: string, password?: string): void {
+    if (!this.socket?.connected) {
+      console.warn('Cannot join room: Socket not connected');
+      return;
+    }
+    this.socket.emit('room:join', { roomId, password });
   }
 }
 

@@ -46,6 +46,7 @@ export function StartScreen() {
   } = useGameStore();
   const [isMatchmaking, setIsMatchmaking] = useState(false);
   const [matchmakingStatus, setMatchmakingStatus] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     socketService.setupMatchmakingListeners({
@@ -62,6 +63,23 @@ export function StartScreen() {
       }
     });
   }, [joinRoom, addNotification]);
+
+  useEffect(() => {
+    socketService.on('room:created', (room) => {
+      setIsLoading(false);
+      console.log('Room created:', room);
+    });
+
+    socketService.on('room:join:error', (error) => {
+      setIsLoading(false);
+      addNotification(error);
+    });
+
+    return () => {
+      socketService.off('room:created');
+      socketService.off('room:join:error');
+    };
+  }, [addNotification]);
 
   const handleStart = () => {
     if (!playerName.trim()) return;
@@ -93,6 +111,19 @@ export function StartScreen() {
   const cancelMatchmaking = () => {
     setIsMatchmaking(false);
     socketService.cancelMatchmaking();
+  };
+
+  const handleCreateRoom = () => {
+    if (!playerName.trim()) return;
+    
+    socketService.createRoom({
+      name: playerName,
+      isPrivate: false,
+      gameMode: 'ffa',
+      maxPlayers: 10
+    });
+    
+    setIsLoading(true);
   };
 
   return (

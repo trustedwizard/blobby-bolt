@@ -964,13 +964,28 @@ export const useGameStore = create(
         const team2 = state.teams.find(t => t.id === team2Id);
         
         if (!team1 || !team2) return;
-
-        // Emit team collision event
-        socketService.emit('team:collision', {
-          team1Id,
-          team2Id,
-          position: { x: state.player?.x || 0, y: state.player?.y || 0 }
-        });
+        
+        // Calculate team scores based on blob sizes
+        const team1Power = team1.players.reduce((sum, playerId) => {
+          const blob = state.blobs.find(b => b.id === playerId);
+          return sum + (blob?.radius || 0);
+        }, 0);
+        
+        const team2Power = team2.players.reduce((sum, playerId) => {
+          const blob = state.blobs.find(b => b.id === playerId);
+          return sum + (blob?.radius || 0);
+        }, 0);
+        
+        // Update team scores
+        if (team1Power > team2Power * 1.25) {
+          set(state => ({
+            teams: state.teams.map(team => 
+              team.id === team1Id 
+                ? { ...team, score: team.score + Math.floor(team2Power / 10) }
+                : team
+            )
+          }));
+        }
       },
 
       getTeamSpawnPoint: (teamId: string) => {

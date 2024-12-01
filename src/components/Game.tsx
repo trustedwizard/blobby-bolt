@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, Suspense } from 'react';
 import * as PIXI from 'pixi.js';
 import { Stage, Container } from '@pixi/react';
 import { useGameStore } from '../store/gameStore';
@@ -18,11 +18,10 @@ import { TrailSystem } from '../systems/TrailSystem';
 import { EnvironmentSystem } from '../systems/EnvironmentSystem';
 import { VisualEffectsSystem } from '../systems/VisualEffectsSystem';
 import { WORLD_SIZE } from '../constants/gameConstants';
-import { PowerUp, PowerUpType, ActivePowerUp, PowerUpCombo } from '../types/powerups';
 import { PowerUpEffect, CollisionEffect, GrowthEffect } from '../types/effects';
-import { BaseSystem } from '../systems/BaseSystem';
 import { IVisualEffectsSystem } from '../systems/VisualEffectsSystem';
 import { GameLoop } from '../systems/GameLoop';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 
 // Configure PIXI.js defaults
 PIXI.settings.PREFER_ENV = PIXI.ENV.WEBGL2;
@@ -57,6 +56,7 @@ const isGameSystem = (system: any): system is GameSystem => {
 };
 
 export function Game() {
+  const isMobile = useMediaQuery('(max-width: 768px)');
   const [isLoading, setIsLoading] = useState(true);
   const [dimensions, setDimensions] = useState({
     width: window.innerWidth,
@@ -73,7 +73,8 @@ export function Game() {
     player,
     food,
     socket,
-    setMousePosition
+    setMousePosition,
+    setZoom
   } = useGameStore();
   const [app, setApp] = useState<PIXI.Application<PIXI.ICanvas> | null>(null);
   const containerRef = useRef<PIXI.Container | null>(null);
@@ -83,6 +84,7 @@ export function Game() {
   const trailSystem = useRef<TrailSystem | null>(null);
   const environmentSystem = useRef<EnvironmentSystem | null>(null);
   const [gameLoop] = useState(() => new GameLoop());
+  const TouchControls = React.lazy(() => import('./TouchControls'));
 
   const detectBestRenderer = useCallback(() => {
     try {
@@ -251,13 +253,39 @@ export function Game() {
     const touch = event.touches[0];
     const canvas = document.querySelector('canvas');
     if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
     
+    const rect = canvas.getBoundingClientRect();
     const touchX = touch.clientX - rect.left;
     const touchY = touch.clientY - rect.top;
     
-    setMousePosition({ x: touchX, y: touchY });
+    // Add touch deadzone for better control
+    const centerX = window.innerWidth / 2;
+    const centerY = window.innerHeight / 2;
+    const dx = touchX - centerX;
+    const dy = touchY - centerY;
+    const distance = Math.hypot(dx, dy);
+    
+    if (distance > 20) { // Deadzone radius
+      setMousePosition({ x: touchX, y: touchY });
+    }
   }, [player, setMousePosition]);
+
+  // Add mobile-specific gesture handlers
+  const handleTouchGestures = useCallback((event: TouchEvent) => {
+    if (event.touches.length === 2) {
+      // Handle pinch to zoom
+      const touch1 = event.touches[0];
+      const touch2 = event.touches[1];
+      const distance = Math.hypot(
+        touch2.clientX - touch1.clientX,
+        touch2.clientY - touch1.clientY
+      );
+      
+      // Update camera zoom based on pinch distance
+      const zoom = Math.max(0.5, Math.min(2, distance / 300));
+      setZoom(zoom);
+    }
+  }, [setZoom]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyPress);
@@ -465,7 +493,13 @@ export function Game() {
           })}
         </Container>
       </Stage>
-      <GameHUD />
+      
+      {isMobile && (
+        <Suspense fallback={null}>
+          <TouchControls />
+        </Suspense>
+      )}
+      <GameHUD isMobile={isMobile} />
       <TutorialSystem />
       <Notifications notifications={notifications} />
     </>

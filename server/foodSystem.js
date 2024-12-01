@@ -1,183 +1,308 @@
-// Move FOOD_TYPES outside the class
+import { config } from './utils/config.js';
+import { logger } from './utils/logger.js';
+
+// Food types with their properties
 const FOOD_TYPES = {
-  NORMAL: { chance: 1, points: 1, growth: 1.005 }
+  NORMAL: { 
+    chance: 0.7, 
+    points: 1, 
+    growth: 1.005,
+    size: 10,
+    color: 0xFFFFFF
+  },
+  SUPER: { 
+    chance: 0.2, 
+    points: 2, 
+    growth: 1.008,
+    size: 15,
+    color: 0xFFAA00
+  },
+  MEGA: { 
+    chance: 0.08, 
+    points: 5, 
+    growth: 1.015,
+    size: 20,
+    color: 0xFF5500
+  },
+  ULTRA: { 
+    chance: 0.02, 
+    points: 10, 
+    growth: 1.025,
+    size: 25,
+    color: 0xFF0000
+  }
 };
 
 export class FoodSystem {
-  constructor(worldSize, minFoodPerPlayer = 10, maxFoodPerPlayer = 15) {
+  constructor(worldSize = config.worldSize, minFoodPerPlayer = 10, maxFoodPerPlayer = 15) {
     this.worldSize = worldSize;
     this.minFoodPerPlayer = minFoodPerPlayer;
     this.maxFoodPerPlayer = maxFoodPerPlayer;
     this.maxTotalFood = 300;
     this.foodItems = new Map();
+    this.cellSize = 100;
     this.grid = this.initializeGrid();
-    this.despawnTime = 30000;
+    this.despawnTime = 30000; // 30 seconds
     this.lastSpawnTime = Date.now();
-    this.spawnCooldown = 1000;
+    this.spawnCooldown = 1000; // 1 second
     this.foodTypes = FOOD_TYPES;
+    this.ejectedMassDecayTime = 10000; // 10 seconds
+    this.maxFoodPerCell = 5;
+    this.minDistanceBetweenFood = 20;
+    this.lastCleanupTime = Date.now();
+    this.cleanupInterval = 5000; // 5 seconds
+
+    logger.info('FoodSystem initialized', {
+      worldSize: this.worldSize,
+      minFoodPerPlayer,
+      maxFoodPerPlayer,
+      maxTotalFood: this.maxTotalFood,
+      cellSize: this.cellSize,
+      foodTypes: Object.keys(this.foodTypes)
+    });
   }
 
-  initializeGrid(cellSize = 100) {
-    const gridSize = Math.ceil(this.worldSize / cellSize);
-    return Array(gridSize).fill(null).map(() => 
-      Array(gridSize).fill(0)
-    );
+  update(playerCount) {
+    const now = Date.now();
+
+    // Cleanup expired food
+    if (now - this.lastCleanupTime > this.cleanupInterval) {
+      this.cleanupExpiredFood();
+      this.lastCleanupTime = now;
+    }
+
+    // Spawn new food if needed
+    const targetFoodCount = this.calculateTargetFoodCount(playerCount);
+    if (this.foodItems.size < targetFoodCount && 
+        now - this.lastSpawnTime > this.spawnCooldown) {
+      const numToSpawn = Math.min(
+        5, // Spawn up to 5 at a time
+        targetFoodCount - this.foodItems.size
+      );
+      const newFood = this.spawnFood(numToSpawn);
+      logger.debug('Food spawned', {
+        spawnCount: newFood.length,
+        currentTotal: this.foodItems.size,
+        targetTotal: targetFoodCount
+      });
+      this.lastSpawnTime = now;
+    }
   }
 
   calculateTargetFoodCount(playerCount) {
-    const baseCount = playerCount * this.minFoodPerPlayer;
+    const baseCount = Math.max(
+      this.minFoodPerPlayer * playerCount,
+      this.minFoodPerPlayer * 2 // Minimum food even with no players
+    );
     return Math.min(baseCount, this.maxTotalFood);
   }
 
-  getFoodInCell(x, y) {
-    const gridX = Math.floor(x / 100);
-    const gridY = Math.floor(y / 100);
-    return this.grid[gridX]?.[gridY] || 0;
+  spawnFood(count, players = []) {
+    const newFood = [];
+    for (let i = 0; i < count; i++) {
+      const location = this.findSpawnLocation(players);
+      if (location) {
+        const food = this.createFood(location);
+        this.addFood(food);
+        newFood.push(food);
+      } else {
+        logger.warn('Failed to find suitable food spawn location', {
+          attempt: i + 1,
+          maxAttempts: count
+        });
+      }
+    }
+    return newFood;
   }
 
-  updateGridCell(x, y, increment = true) {
-    const gridX = Math.floor(x / 100);
-    const gridY = Math.floor(y / 100);
-    if (this.grid[gridX]?.[gridY] !== undefined) {
-      this.grid[gridX][gridY] += increment ? 1 : -1;
+  createFood(location) {
+    const type = this.selectFoodType();
+    const properties = this.foodTypes[type];
+    
+    return {
+      id: `food-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      x: location.x,
+      y: location.y,
+      type: type,
+      size: properties.size,
+      points: properties.points,
+      growth: properties.growth,
+      color: properties.color,
+      spawnTime: Date.now()
+    };
+  }
+
+  selectFoodType() {
+    const rand = Math.random();
+    let cumulativeChance = 0;
+    
+    for (const [type, properties] of Object.entries(this.foodTypes)) {
+      cumulativeChance += properties.chance;
+      if (rand <= cumulativeChance) {
+        return type;
+      }
     }
+    
+    return 'NORMAL'; // Fallback
   }
 
   findSpawnLocation(players) {
-    let attempts = 0;
     const maxAttempts = 10;
     
-    while (attempts < maxAttempts) {
+    for (let i = 0; i < maxAttempts; i++) {
       const x = Math.random() * this.worldSize;
       const y = Math.random() * this.worldSize;
       
-      // Check grid density
-      if (this.getFoodInCell(x, y) >= 3) {
-        attempts++;
-        continue;
-      }
-      
       // Check distance from players
       const tooCloseToPlayer = players.some(player => {
-        const distance = Math.hypot(player.x - x, player.y - y);
+        const distance = Math.hypot(x - player.x, y - player.y);
         return distance < player.radius * 3;
       });
       
-      if (!tooCloseToPlayer) {
+      // Check distance from other food
+      if (!tooCloseToPlayer && !this.isTooCloseToFood(x, y)) {
         return { x, y };
       }
-      
-      attempts++;
     }
     
-    // Fallback to random position if no suitable location found
+    logger.debug('Using fallback spawn location after max attempts');
     return {
       x: Math.random() * this.worldSize,
       y: Math.random() * this.worldSize
     };
   }
 
-  spawnFood(count, players) {
-    const now = Date.now();
-    if (now - this.lastSpawnTime < this.spawnCooldown) return [];
-    
-    const newFood = [];
-    for (let i = 0; i < count; i++) {
-      const location = this.findSpawnLocation(players);
-      const food = {
-        id: `food-${now}-${Math.random().toString(36).substr(2, 9)}`,
-        x: location.x,
-        y: location.y,
-        color: Math.random() * 0xFFFFFF,
-        size: 10,
-        spawnTime: now,
-        type: 'normal'
-      };
-      
-      this.foodItems.set(food.id, food);
-      this.updateGridCell(food.x, food.y, true);
-      newFood.push(food);
-    }
-    
-    this.lastSpawnTime = now;
-    return newFood;
-  }
-
-  removeFood(foodId) {
-    const food = this.foodItems.get(foodId);
-    if (food) {
-      this.updateGridCell(food.x, food.y, false);
-      this.foodItems.delete(foodId);
-      return true;
-    }
-    return false;
-  }
-
-  update(players) {
-    const now = Date.now();
-    const targetFoodCount = this.calculateTargetFoodCount(players.length);
-    const currentFoodCount = this.foodItems.size;
-    
-    // Remove expired food
-    for (const [id, food] of this.foodItems.entries()) {
-      if (now - food.spawnTime > this.despawnTime) {
-        this.removeFood(id);
-      }
-    }
-    
-    // Spawn new food if needed
-    if (currentFoodCount < targetFoodCount) {
-      const spawnCount = Math.min(
-        5, // Max food to spawn per update
-        targetFoodCount - currentFoodCount
-      );
-      return this.spawnFood(spawnCount, players);
-    }
-    
-    return [];
+  isTooCloseToFood(x, y) {
+    const nearbyFood = this.getFoodNearPoint(x, y, this.minDistanceBetweenFood);
+    return nearbyFood.length > 0;
   }
 
   getFoodNearPoint(x, y, radius) {
+    const gridX = Math.floor(x / this.cellSize);
+    const gridY = Math.floor(y / this.cellSize);
+    const cellRadius = Math.ceil(radius / this.cellSize);
     const nearbyFood = [];
-    const gridX = Math.floor(x / 100);
-    const gridY = Math.floor(y / 100);
-    
-    // Check surrounding cells
-    for (let i = -1; i <= 1; i++) {
-      for (let j = -1; j <= 1; j++) {
-        const checkX = gridX + i;
-        const checkY = gridY + j;
+
+    for (let dx = -cellRadius; dx <= cellRadius; dx++) {
+      for (let dy = -cellRadius; dy <= cellRadius; dy++) {
+        const checkX = gridX + dx;
+        const checkY = gridY + dy;
         
-        if (this.grid[checkX]?.[checkY] > 0) {
-          for (const food of this.foodItems.values()) {
-            const distance = Math.hypot(food.x - x, food.y - y);
-            if (distance <= radius) {
-              nearbyFood.push(food);
+        if (this.grid[checkX]?.[checkY]) {
+          for (const foodId of this.grid[checkX][checkY]) {
+            const food = this.foodItems.get(foodId);
+            if (food) {
+              const distance = Math.hypot(x - food.x, y - food.y);
+              if (distance <= radius) {
+                nearbyFood.push(food);
+              }
             }
           }
         }
       }
     }
-    
+
     return nearbyFood;
   }
 
-  getAllFood() {
-    return Array.from(this.foodItems.values());
+  addFood(food) {
+    this.foodItems.set(food.id, food);
+    const gridX = Math.floor(food.x / this.cellSize);
+    const gridY = Math.floor(food.y / this.cellSize);
+    
+    if (this.grid[gridX]?.[gridY]) {
+      this.grid[gridX][gridY].add(food.id);
+    }
+
+    logger.debug('Food added', {
+      foodId: food.id,
+      type: food.type,
+      position: { x: food.x, y: food.y },
+      gridCell: { x: gridX, y: gridY }
+    });
   }
 
-  getFoodById(foodId) {
-    return this.foodItems.get(foodId);
+  removeFood(foodId) {
+    const food = this.foodItems.get(foodId);
+    if (food) {
+      const gridX = Math.floor(food.x / this.cellSize);
+      const gridY = Math.floor(food.y / this.cellSize);
+      
+      if (this.grid[gridX]?.[gridY]) {
+        this.grid[gridX][gridY].delete(food.id);
+      }
+      
+      this.foodItems.delete(foodId);
+
+      logger.debug('Food removed', {
+        foodId,
+        type: food.type,
+        position: { x: food.x, y: food.y }
+      });
+    }
+  }
+
+  cleanupExpiredFood() {
+    const now = Date.now();
+    let cleanupCount = 0;
+    
+    for (const [id, food] of this.foodItems.entries()) {
+      if (food.type === 'ejected' && now - food.spawnTime > this.ejectedMassDecayTime) {
+        this.removeFood(id);
+        cleanupCount++;
+      }
+    }
+
+    if (cleanupCount > 0) {
+      logger.debug('Expired food cleaned up', {
+        cleanupCount,
+        remainingFood: this.foodItems.size
+      });
+    }
   }
 
   addEjectedMass(ejectedMass) {
     const food = {
       ...ejectedMass,
       type: 'ejected',
+      size: 15,
+      points: 2,
+      growth: 1.003,
+      color: ejectedMass.color || 0xCCCCCC,
       spawnTime: Date.now()
     };
-    this.foodItems.set(food.id, food);
-    this.updateGridCell(food.x, food.y, true);
+
+    this.addFood(food);
+    logger.debug('Ejected mass added', {
+      foodId: food.id,
+      playerId: ejectedMass.playerId,
+      position: { x: food.x, y: food.y }
+    });
+
     return food;
+  }
+
+  initializeGrid() {
+    const gridSize = Math.ceil(this.worldSize / this.cellSize);
+    return Array(gridSize).fill(null).map(() => 
+      Array(gridSize).fill(null).map(() => new Set())
+    );
+  }
+
+  clear() {
+    const foodCount = this.foodItems.size;
+    this.foodItems.clear();
+    this.grid = this.initializeGrid();
+    logger.info('Food system cleared', {
+      clearedFoodCount: foodCount
+    });
+  }
+
+  getAllFood() {
+    return Array.from(this.foodItems.values());
+  }
+
+  getFoodCount() {
+    return this.foodItems.size;
   }
 } 

@@ -1,323 +1,368 @@
-import { PowerUpType, POWER_UP_COMBOS } from '../shared/types/powerups.js';
+import { config } from './utils/config.js';
+import { logger } from './utils/logger.js';
 
-class PowerUpSystem {
-  constructor(io, gameState) {
-    this.io = io;
-    this.gameState = gameState;
+const POWER_UP_TYPES = {
+  SPEED: {
+    name: 'Speed Boost',
+    duration: 5000,
+    multiplier: 1.5,
+    color: 0xFFFF00,
+    radius: 20,
+    weight: 30,
+    stackable: false,
+    effect: (player) => {
+      player.speed *= 1.5;
+      return () => { player.speed /= 1.5; };
+    }
+  },
+  SHIELD: {
+    name: 'Shield',
+    duration: 8000,
+    color: 0x00FFFF,
+    radius: 25,
+    weight: 20,
+    stackable: true,
+    maxStacks: 3,
+    effect: (player) => {
+      player.shield = true;
+      return () => { player.shield = false; };
+    }
+  },
+  SIZE: {
+    name: 'Size Change',
+    duration: 6000,
+    color: 0xFF00FF,
+    radius: 22,
+    weight: 15,
+    stackable: false,
+    effect: (player) => {
+      const originalSize = player.radius;
+      player.radius *= 1.3;
+      return () => { player.radius = originalSize; };
+    }
+  },
+  POINTS: {
+    name: 'Point Multiplier',
+    duration: 10000,
+    multiplier: 2,
+    color: 0xFFA500,
+    radius: 18,
+    weight: 25,
+    stackable: false,
+    effect: (player) => {
+      player.pointMultiplier = (player.pointMultiplier || 1) * 2;
+      return () => { player.pointMultiplier /= 2; };
+    }
+  },
+  GHOST: {
+    name: 'Ghost Mode',
+    duration: 4000,
+    color: 0x808080,
+    radius: 23,
+    weight: 10,
+    stackable: false,
+    effect: (player) => {
+      player.ghost = true;
+      return () => { player.ghost = false; };
+    }
+  }
+};
+
+export class PowerUpSystem {
+  constructor(worldSize = config.worldSize) {
+    this.worldSize = worldSize;
     this.powerUps = new Map();
-    this.maxPowerUps = 10;
-    this.spawnInterval = 5000;
-    this.despawnTime = 30000;
-    this.minDistanceFromPlayers = 100;
-
-    this.start();
-  }
-
-  start() {
-    setInterval(() => {
-      this.spawnPowerUps();
-      this.cleanupExpiredPowerUps();
-    }, this.spawnInterval);
-  }
-
-  spawnPowerUps() {
-    if (this.powerUps.size >= this.maxPowerUps) return;
-
-    const playerPositions = Array.from(this.gameState.players.values())
-      .map(player => ({ x: player.x, y: player.y }));
-
-    const numToSpawn = this.maxPowerUps - this.powerUps.size;
+    this.activeEffects = new Map();
+    this.grid = this.initializeGrid();
+    this.cellSize = 100;
+    this.spawnInterval = config.powerUpSpawnInterval || 5000;
+    this.maxPowerUps = config.maxPowerUps || 20;
+    this.minDistance = 100;
+    this.lastSpawnTime = Date.now();
+    this.powerUpTypes = POWER_UP_TYPES;
     
-    for (let i = 0; i < numToSpawn; i++) {
-      const powerUp = this.generatePowerUp(playerPositions);
-      this.powerUps.set(powerUp.id, powerUp);
-      this.io.emit('powerup:spawn', powerUp);
-    }
-  }
-
-  generatePowerUp(playerPositions) {
-    const types = Object.values(PowerUpType);
-    const type = types[Math.floor(Math.random() * types.length)];
-    let position;
-
-    do {
-      position = {
-        x: Math.random() * this.gameState.worldSize,
-        y: Math.random() * this.gameState.worldSize
-      };
-    } while (this.isTooCloseToPlayers(position, playerPositions));
-
-    return {
-      id: `powerup-${Date.now()}-${Math.random()}`,
-      type,
-      position,
-      spawnTime: Date.now(),
-      duration: this.getDuration(type),
-      isInstant: this.isInstantPowerUp(type)
-    };
-  }
-
-  isTooCloseToPlayers(position, playerPositions) {
-    return playerPositions.some(playerPos => {
-      const distance = Math.sqrt(
-        Math.pow(position.x - playerPos.x, 2) + 
-        Math.pow(position.y - playerPos.y, 2)
-      );
-      return distance < this.minDistanceFromPlayers;
+    logger.info('PowerUpSystem initialized', {
+      worldSize: this.worldSize,
+      cellSize: this.cellSize,
+      spawnInterval: this.spawnInterval,
+      maxPowerUps: this.maxPowerUps
     });
   }
 
-  getDuration(type) {
-    const durations = {
-      [PowerUpType.SPEED_BOOST]: 10000,
-      [PowerUpType.SHIELD]: 8000,
-      [PowerUpType.BLOB_MAGNET]: 15000,
-      [PowerUpType.GRAVITY_PULSE]: 0,
-      [PowerUpType.TELEPORT]: 0,
-      [PowerUpType.SPLIT_BOMB]: 0
-    };
-    return durations[type];
-  }
-
-  isInstantPowerUp(type) {
-    const instantTypes = [
-      PowerUpType.GRAVITY_PULSE,
-      PowerUpType.TELEPORT,
-      PowerUpType.SPLIT_BOMB
-    ];
-    return instantTypes.includes(type);
-  }
-
-  cleanupExpiredPowerUps() {
+  update() {
     const now = Date.now();
-    for (const [id, powerUp] of this.powerUps.entries()) {
-      if (now - powerUp.spawnTime > this.despawnTime) {
-        this.powerUps.delete(id);
-        this.io.emit('powerup:despawn', id);
+
+    // Update active effects
+    for (const [playerId, effects] of this.activeEffects) {
+      effects.forEach((effect, index) => {
+        if (now >= effect.endTime) {
+          effect.cleanup();
+          effects.splice(index, 1);
+          logger.debug('Power-up effect expired', {
+            playerId,
+            powerUpType: effect.type
+          });
+        }
+      });
+
+      if (effects.length === 0) {
+        this.activeEffects.delete(playerId);
       }
+    }
+
+    // Spawn new power-ups
+    if (now - this.lastSpawnTime >= this.spawnInterval) {
+      this.spawnRandomPowerUp();
+      this.lastSpawnTime = now;
     }
   }
 
-  handleCollection(powerUpId, playerId) {
-    const powerUp = this.powerUps.get(powerUpId);
-    if (!powerUp) return null;
+  spawnRandomPowerUp() {
+    if (this.powerUps.size >= this.maxPowerUps) {
+      logger.debug('Maximum power-ups reached, skipping spawn');
+      return null;
+    }
 
-    this.powerUps.delete(powerUpId);
-    this.io.emit('powerup:collected', { powerUpId, playerId });
+    const type = this.getRandomPowerUpType();
+    const position = this.findSpawnPosition();
+    
+    if (!position) {
+      logger.warn('Could not find suitable spawn position for power-up');
+      return null;
+    }
 
+    return this.createPowerUp(type, position.x, position.y);
+  }
+
+  createPowerUp(type, x, y) {
+    const powerUpType = this.powerUpTypes[type];
+    if (!powerUpType) {
+      logger.error('Invalid power-up type', { type });
+      throw new Error(`Invalid power-up type: ${type}`);
+    }
+
+    const id = `powerup-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const powerUp = {
+      id,
+      type,
+      x,
+      y,
+      ...powerUpType,
+      createdAt: Date.now()
+    };
+
+    this.powerUps.set(id, powerUp);
+    this.addToGrid(powerUp);
+
+    logger.debug('Power-up created', {
+      id,
+      type,
+      position: { x, y }
+    });
+
+    return powerUp;
+  }
+
+  findSpawnPosition() {
+    const maxAttempts = 20;
+    
+    for (let i = 0; i < maxAttempts; i++) {
+      const x = Math.random() * this.worldSize;
+      const y = Math.random() * this.worldSize;
+      
+      if (!this.isLocationOccupied(x, y)) {
+        return { x, y };
+      }
+    }
+    
+    return null;
+  }
+
+  isLocationOccupied(x, y) {
+    const nearbyPowerUps = this.getNearbyPowerUps(x, y, this.minDistance);
+    return nearbyPowerUps.length > 0;
+  }
+
+  addToGrid(powerUp) {
+    const cell = this.getGridCell(powerUp.x, powerUp.y);
+    if (this.grid[cell.x]?.[cell.y]) {
+      this.grid[cell.x][cell.y].add(powerUp.id);
+    }
+  }
+
+  removeFromGrid(powerUp) {
+    const cell = this.getGridCell(powerUp.x, powerUp.y);
+    if (this.grid[cell.x]?.[cell.y]) {
+      this.grid[cell.x][cell.y].delete(powerUp.id);
+    }
+  }
+
+  getGridCell(x, y) {
     return {
-      ...powerUp,
-      playerId,
-      expiresAt: Date.now() + powerUp.duration
+      x: Math.floor(x / this.cellSize),
+      y: Math.floor(y / this.cellSize)
     };
   }
 
-  applyPowerUpEffect(powerUp, player) {
-    switch (powerUp.type) {
-      case PowerUpType.SPEED_BOOST:
-        this.applySpeedBoost(player, powerUp.duration);
-        break;
+  getNearbyPowerUps(x, y, radius) {
+    const cell = this.getGridCell(x, y);
+    const cellRadius = Math.ceil(radius / this.cellSize);
+    const nearbyPowerUps = [];
 
-      case PowerUpType.SHIELD:
-        this.applyShield(player, powerUp.duration);
-        break;
-
-      case PowerUpType.BLOB_MAGNET:
-        this.applyBlobMagnet(player, powerUp.duration);
-        break;
-
-      case PowerUpType.GRAVITY_PULSE:
-        this.applyGravityPulse(player);
-        break;
-
-      case PowerUpType.TELEPORT:
-        this.applyTeleport(player);
-        break;
-
-      case PowerUpType.SPLIT_BOMB:
-        this.applySplitBomb(player);
-        break;
+    for (let dx = -cellRadius; dx <= cellRadius; dx++) {
+      for (let dy = -cellRadius; dy <= cellRadius; dy++) {
+        const checkX = cell.x + dx;
+        const checkY = cell.y + dy;
+        
+        if (checkX >= 0 && checkX < this.grid.length && 
+            checkY >= 0 && checkY < this.grid[0].length) {
+          this.grid[checkX][checkY].forEach(powerUpId => {
+            const powerUp = this.powerUps.get(powerUpId);
+            if (powerUp) {
+              const distance = Math.hypot(x - powerUp.x, y - powerUp.y);
+              if (distance <= radius) {
+                nearbyPowerUps.push(powerUp);
+              }
+            }
+          });
+        }
+      }
     }
 
-    this.io.emit('powerup:effect', {
+    return nearbyPowerUps;
+  }
+
+  handleCollision(player, powerUpId) {
+    const powerUp = this.powerUps.get(powerUpId);
+    if (!powerUp) return false;
+
+    try {
+      // Check if player can stack this power-up
+      if (!this.canApplyPowerUp(player, powerUp)) {
+        logger.debug('Power-up stack limit reached', {
+          playerId: player.id,
+          powerUpType: powerUp.type
+        });
+        return false;
+      }
+
+      // Apply power-up effect
+      const cleanup = powerUp.effect(player);
+      const effect = {
+        type: powerUp.type,
+        endTime: Date.now() + powerUp.duration,
+        cleanup
+      };
+
+      // Track active effect
+      if (!this.activeEffects.has(player.id)) {
+        this.activeEffects.set(player.id, []);
+      }
+      this.activeEffects.get(player.id).push(effect);
+
+      // Remove power-up from world
+      this.removePowerUp(powerUpId);
+
+      logger.debug('Power-up collected', {
+        playerId: player.id,
+        powerUpId,
+        powerUpType: powerUp.type
+      });
+
+      return true;
+    } catch (error) {
+      logger.error('Error applying power-up effect', {
+        playerId: player.id,
+        powerUpId,
+        error: error.message
+      });
+      return false;
+    }
+  }
+
+  canApplyPowerUp(player, powerUp) {
+    if (!powerUp.stackable) {
+      // Check if player already has this non-stackable effect
+      const activeEffects = this.activeEffects.get(player.id) || [];
+      return !activeEffects.some(effect => effect.type === powerUp.type);
+    }
+
+    // Check stack limit for stackable effects
+    const currentStacks = (this.activeEffects.get(player.id) || [])
+      .filter(effect => effect.type === powerUp.type)
+      .length;
+
+    return currentStacks < (powerUp.maxStacks || Infinity);
+  }
+
+  removePowerUp(powerUpId) {
+    const powerUp = this.powerUps.get(powerUpId);
+    if (!powerUp) return false;
+
+    this.removeFromGrid(powerUp);
+    this.powerUps.delete(powerUpId);
+
+    logger.debug('Power-up removed', {
+      powerUpId,
       type: powerUp.type,
-      playerId: player.id
+      position: { x: powerUp.x, y: powerUp.y }
+    });
+
+    return true;
+  }
+
+  getRandomPowerUpType() {
+    const types = Object.keys(this.powerUpTypes);
+    const weights = types.map(type => this.powerUpTypes[type].weight);
+    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+    let random = Math.random() * totalWeight;
+    
+    for (let i = 0; i < types.length; i++) {
+      random -= weights[i];
+      if (random <= 0) {
+        return types[i];
+      }
+    }
+    
+    return types[0];
+  }
+
+  initializeGrid() {
+    const gridSize = Math.ceil(this.worldSize / this.cellSize);
+    return Array(gridSize).fill(null).map(() => 
+      Array(gridSize).fill(null).map(() => new Set())
+    );
+  }
+
+  clear() {
+    const powerUpCount = this.powerUps.size;
+    this.powerUps.clear();
+    this.activeEffects.clear();
+    this.grid = this.initializeGrid();
+    
+    logger.info('Power-up system cleared', {
+      clearedPowerUps: powerUpCount
     });
   }
 
-  applySpeedBoost(player, duration) {
-    const SPEED_MULTIPLIER = 1.5;
-    
-    player.speedMultiplier = SPEED_MULTIPLIER;
-    player.effects = player.effects || {};
-    player.effects.speedBoost = {
-      endTime: Date.now() + duration
-    };
-
-    setTimeout(() => {
-      if (player.effects?.speedBoost) {
-        delete player.effects.speedBoost;
-        player.speedMultiplier = 1;
-        this.io.emit('player:updated', player);
-      }
-    }, duration);
-
-    this.io.emit('player:updated', player);
+  getPowerUps() {
+    return Array.from(this.powerUps.values());
   }
 
-  applyShield(player, duration) {
-    player.isShielded = true;
-    player.effects = player.effects || {};
-    player.effects.shield = {
-      endTime: Date.now() + duration
-    };
-
-    setTimeout(() => {
-      if (player.effects?.shield) {
-        delete player.effects.shield;
-        player.isShielded = false;
-        this.io.emit('player:updated', player);
-      }
-    }, duration);
-
-    this.io.emit('player:updated', player);
+  getActiveEffects(playerId) {
+    return this.activeEffects.get(playerId) || [];
   }
 
-  applyBlobMagnet(player, duration) {
-    const MAGNET_RADIUS = 200;
-    const PULL_FORCE = 4;
-
-    player.hasMagnet = true;
-    player.effects = player.effects || {};
-    player.effects.magnet = {
-      endTime: Date.now() + duration,
-      radius: MAGNET_RADIUS,
-      force: PULL_FORCE
-    };
-
-    // Start magnet effect interval
-    const magnetInterval = setInterval(() => {
-      if (!player.effects?.magnet || Date.now() > player.effects.magnet.endTime) {
-        clearInterval(magnetInterval);
-        delete player.effects.magnet;
-        player.hasMagnet = false;
-        this.io.emit('player:updated', player);
-        return;
-      }
-
-      // Apply magnet effect to nearby food
-      for (const [foodId, food] of this.gameState.food) {
-        const dx = player.x - food.x;
-        const dy = player.y - food.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-
-        if (distance < MAGNET_RADIUS) {
-          const force = (MAGNET_RADIUS - distance) / MAGNET_RADIUS * PULL_FORCE;
-          food.x += (dx / distance) * force;
-          food.y += (dy / distance) * force;
-          this.io.emit('food:updated', food);
-        }
-      }
-    }, 100); // Update every 100ms
-
-    this.io.emit('player:updated', player);
-  }
-
-  applyGravityPulse(player) {
-    const PULSE_RADIUS = 300;
-    const PULL_FORCE = 8;
-    const PULSE_DURATION = 1000; // 1 second pulse
-
-    const startTime = Date.now();
-    const pulseInterval = setInterval(() => {
-      if (Date.now() - startTime > PULSE_DURATION) {
-        clearInterval(pulseInterval);
-        return;
-      }
-
-      // Apply gravity to nearby blobs
-      for (const [, otherPlayer] of this.gameState.players) {
-        if (otherPlayer.id === player.id) continue;
-        if (otherPlayer.isShielded) continue;
-
-        const dx = player.x - otherPlayer.x;
-        const dy = player.y - otherPlayer.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-
-        if (distance < PULSE_RADIUS) {
-          const force = (PULSE_RADIUS - distance) / PULSE_RADIUS * PULL_FORCE;
-          otherPlayer.x += (dx / distance) * force;
-          otherPlayer.y += (dy / distance) * force;
-          this.io.emit('player:updated', otherPlayer);
-        }
-      }
-    }, 50); // Update every 50ms
-  }
-
-  applyTeleport(player) {
-    const SAFE_MARGIN = 200;
-    let newPosition;
-    let isSafe;
-
-    // Try to find a safe position
-    do {
-      newPosition = {
-        x: SAFE_MARGIN + Math.random() * (this.gameState.worldSize - 2 * SAFE_MARGIN),
-        y: SAFE_MARGIN + Math.random() * (this.gameState.worldSize - 2 * SAFE_MARGIN)
-      };
-
-      isSafe = true;
-      // Check distance from other players
-      for (const [, otherPlayer] of this.gameState.players) {
-        if (otherPlayer.id === player.id) continue;
-        const dx = newPosition.x - otherPlayer.x;
-        const dy = newPosition.y - otherPlayer.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        if (distance < SAFE_MARGIN) {
-          isSafe = false;
-          break;
-        }
-      }
-    } while (!isSafe);
-
-    // Apply teleport
-    player.x = newPosition.x;
-    player.y = newPosition.y;
-    
-    // Add teleport animation state
-    player.effects = player.effects || {};
-    player.effects.teleport = {
-      startTime: Date.now(),
-      duration: 500 // 500ms animation
-    };
-
-    this.io.emit('player:updated', player);
-  }
-
-  applySplitBomb(player) {
-    const BOMB_RADIUS = 250;
-    const MIN_SPLIT_SIZE = 50;
-
-    for (const [, otherPlayer] of this.gameState.players) {
-      if (otherPlayer.id === player.id) continue;
-      if (otherPlayer.isShielded) continue;
-
-      const dx = otherPlayer.x - player.x;
-      const dy = otherPlayer.y - player.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-
-      if (distance < BOMB_RADIUS && otherPlayer.radius >= MIN_SPLIT_SIZE) {
-        // Trigger split for the affected player
-        this.gameState.splitPlayer(otherPlayer.id, {
-          forcedSplit: true,
-          splitDirection: {
-            x: dx / distance,
-            y: dy / distance
-          }
-        });
-      }
+  removePlayerEffects(playerId) {
+    const effects = this.activeEffects.get(playerId);
+    if (effects) {
+      effects.forEach(effect => effect.cleanup());
+      this.activeEffects.delete(playerId);
+      
+      logger.debug('Player effects removed', {
+        playerId,
+        effectCount: effects.length
+      });
     }
   }
-}
-
-export default PowerUpSystem; 
+} 
