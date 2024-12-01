@@ -1,8 +1,8 @@
 import React from 'react';
-import { PowerUp as PowerUpInterface } from '../types/powerups';
+import { PowerUpBase, PowerUpType } from '../types/powerups';
 import styled from 'styled-components';
 
-const PowerUpWrapper = styled.div<{ powerUpType: string }>`
+const PowerUpWrapper = styled.div<{ powerUpType: PowerUpType }>`
   position: absolute;
   width: 30px;
   height: 30px;
@@ -12,17 +12,15 @@ const PowerUpWrapper = styled.div<{ powerUpType: string }>`
   
   ${({ powerUpType }) => {
     switch (powerUpType) {
-      case 'SPEED_BOOST':
+      case PowerUpType.SPEED:
         return 'background: #ffdd00;';
-      case 'SHIELD':
+      case PowerUpType.SHIELD:
         return 'background: #00ff00;';
-      case 'BLOB_MAGNET':
+      case PowerUpType.MASS:
         return 'background: #ff00ff;';
-      case 'GRAVITY_PULSE':
-        return 'background: #0000ff;';
-      case 'TELEPORT':
-        return 'background: #ff0000;';
-      case 'SPLIT_BOMB':
+      case PowerUpType.GHOST:
+        return 'background: #808080;';
+      case PowerUpType.SPLIT:
         return 'background: #ff8800;';
       default:
         return 'background: #cccccc;';
@@ -37,16 +35,16 @@ const PowerUpWrapper = styled.div<{ powerUpType: string }>`
 `;
 
 interface Props {
-  powerUp: PowerUpInterface;
+  powerUp: PowerUpBase;
 }
 
 export const PowerUp: React.FC<Props> = ({ powerUp }) => {
   return (
     <PowerUpWrapper
-      powerUpType={powerUp.type}
+      powerUpType={powerUp.powerUpType}
       style={{
-        left: powerUp.position.x,
-        top: powerUp.position.y
+        left: powerUp.x,
+        top: powerUp.y
       }}
     />
   );

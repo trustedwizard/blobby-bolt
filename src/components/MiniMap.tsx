@@ -1,61 +1,117 @@
-import React from 'react';
+import React, { useRef, useEffect, memo, useCallback } from 'react';
+import { Position, Blob } from '../types/common';
+import { BlobErrorBoundary } from './BlobErrorBoundary';
 
-interface MiniMapProps {
-  playerPosition: { x: number; y: number };
-  visiblePlayers: Array<{ x: number; y: number; color: string | number }>;
-  viewport: { x: number; y: number; width: number; height: number };
+interface Viewport {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
-export const MiniMap: React.FC<MiniMapProps> = ({
+interface MiniMapProps {
+  playerPosition: Position;
+  visiblePlayers: Blob[];
+  viewport: Viewport;
+  worldSize: number;
+  size?: number;
+}
+
+const COLORS = {
+  background: 'rgba(0, 0, 0, 0.5)',
+  viewport: 'rgba(255, 255, 255, 0.3)',
+  player: '#ffffff'
+} as const;
+
+const MiniMapComponent: React.FC<MiniMapProps> = ({
   playerPosition,
   visiblePlayers,
-  viewport
+  viewport,
+  worldSize,
+  size = 200
 }) => {
-  const MINIMAP_SIZE = 150;
-  const WORLD_SIZE = 4000;
-  const scale = MINIMAP_SIZE / WORLD_SIZE;
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const drawMap = useCallback((ctx: CanvasRenderingContext2D) => {
+    // Clear and draw background
+    ctx.clearRect(0, 0, size, size);
+    ctx.fillStyle = COLORS.background;
+    ctx.fillRect(0, 0, size, size);
+
+    // Scale factor for converting world coordinates to minimap coordinates
+    const scale = size / worldSize;
+
+    // Draw viewport area
+    ctx.strokeStyle = COLORS.viewport;
+    ctx.strokeRect(
+      viewport.x * scale,
+      viewport.y * scale,
+      viewport.width * scale,
+      viewport.height * scale
+    );
+
+    // Draw other players
+    visiblePlayers.forEach(player => {
+      if (player.x === playerPosition.x && player.y === playerPosition.y) return;
+      
+      const color = player.color.toString(16).padStart(6, '0');
+      ctx.beginPath();
+      ctx.fillStyle = `#${color}`;
+      ctx.arc(
+        player.x * scale,
+        player.y * scale,
+        Math.max(2, player.radius * scale * 0.5),
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+    });
+
+    // Draw player position
+    ctx.beginPath();
+    ctx.fillStyle = COLORS.player;
+    ctx.arc(
+      playerPosition.x * scale,
+      playerPosition.y * scale,
+      3,
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
+  }, [playerPosition, visiblePlayers, viewport, worldSize, size]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      console.error('Failed to get canvas context');
+      return;
+    }
+
+    try {
+      drawMap(ctx);
+    } catch (error) {
+      console.error('Error drawing minimap:', error);
+    }
+  }, [drawMap]);
 
   return (
-    <div 
-      className="bg-black/50 rounded-lg p-2"
-      style={{ width: MINIMAP_SIZE, height: MINIMAP_SIZE }}
-    >
-      <div className="relative w-full h-full">
-        {/* Viewport indicator */}
-        <div
-          className="absolute border border-white/30"
-          style={{
-            left: viewport.x * scale,
-            top: viewport.y * scale,
-            width: viewport.width * scale,
-            height: viewport.height * scale
-          }}
-        />
-        
-        {/* Players */}
-        {visiblePlayers.map((player, index) => (
-          <div
-            key={index}
-            className="absolute w-2 h-2 rounded-full"
-            style={{
-              left: player.x * scale,
-              top: player.y * scale,
-              backgroundColor: typeof player.color === 'number' 
-                ? `#${player.color.toString(16)}` 
-                : player.color
-            }}
-          />
-        ))}
-        
-        {/* Player position */}
-        <div
-          className="absolute w-2 h-2 bg-cyan-400 rounded-full"
-          style={{
-            left: playerPosition.x * scale,
-            top: playerPosition.y * scale
-          }}
-        />
-      </div>
+    <div className="bg-black/50 rounded-lg p-2 backdrop-blur-sm">
+      <canvas
+        ref={canvasRef}
+        width={size}
+        height={size}
+        className="rounded"
+        style={{ imageRendering: 'pixelated' }}
+      />
     </div>
   );
-}; 
+};
+
+export const MiniMap = memo(({ ...props }: MiniMapProps) => (
+  <BlobErrorBoundary id="minimap">
+    <MiniMapComponent {...props} />
+  </BlobErrorBoundary>
+)); 

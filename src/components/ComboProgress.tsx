@@ -1,7 +1,7 @@
 import React from 'react';
 import styled from 'styled-components';
 import { comboStatsService } from '../services/comboStatsService';
-import { POWER_UP_COMBOS } from '../types/powerups';
+import { POWER_UP_COMBOS, PowerUpCombo } from '../types/powerups';
 
 const ProgressContainer = styled.div`
   position: fixed;
@@ -98,7 +98,7 @@ export const ComboProgress: React.FC = () => {
       <h3>Combo Mastery</h3>
       {stats.map(({ type, stats }) => {
         if (!stats) return null;
-        const combo = POWER_UP_COMBOS[type as keyof typeof POWER_UP_COMBOS];
+        const combo = POWER_UP_COMBOS[type as keyof typeof POWER_UP_COMBOS] as PowerUpCombo;
         const masteryLevel = getMasteryLevel(stats.totalActivations);
         
         return (

@@ -2,8 +2,6 @@ import React, { useEffect, useRef } from 'react';
 import { Container, Graphics } from '@pixi/react';
 import * as PIXI from 'pixi.js';
 import { PowerUpType } from '../types/powerups';
-import { useGameStore } from '../store/gameStore';
-import { PerformanceManager } from '../systems/PerformanceManager';
 
 interface Props {
   activeEffects: PowerUpType[];
@@ -18,39 +16,30 @@ export const PowerUpEffects: React.FC<Props> = ({
   showCollectEffect = false,
   showActivateEffect = false
 }) => {
-  const performanceManager = useRef<PerformanceManager | null>(null);
   const particlesRef = useRef<PIXI.Graphics[]>([]);
-  const app = useGameStore(state => state.pixiApp);
 
   useEffect(() => {
-    if (app?.renderer instanceof PIXI.Renderer) {
-      performanceManager.current = PerformanceManager.getInstance(app.renderer);
-    }
-
     return () => {
       particlesRef.current.forEach(particle => {
         if (particle && !particle.destroyed) {
           particle.destroy();
-          performanceManager.current?.releaseParticle(particle);
         }
       });
       particlesRef.current = [];
     };
-  }, [app]);
+  }, []);
 
   const getEffectColor = (type: PowerUpType): number => {
     switch (type) {
-      case PowerUpType.SPEED_BOOST:
+      case PowerUpType.SPEED:
         return 0xffdd00;
       case PowerUpType.SHIELD:
         return 0x00ff00;
-      case PowerUpType.BLOB_MAGNET:
+      case PowerUpType.MASS:
         return 0xff00ff;
-      case PowerUpType.GRAVITY_PULSE:
-        return 0x0000ff;
-      case PowerUpType.TELEPORT:
-        return 0xff0000;
-      case PowerUpType.SPLIT_BOMB:
+      case PowerUpType.GHOST:
+        return 0x808080;
+      case PowerUpType.SPLIT:
         return 0xff8800;
       default:
         return 0xffffff;
@@ -70,7 +59,7 @@ export const PowerUpEffects: React.FC<Props> = ({
           />
         );
 
-      case PowerUpType.SPEED_BOOST:
+      case PowerUpType.SPEED:
         return (
           <Graphics
             draw={(g: PIXI.Graphics) => {
@@ -85,7 +74,7 @@ export const PowerUpEffects: React.FC<Props> = ({
           />
         );
 
-      case PowerUpType.BLOB_MAGNET:
+      case PowerUpType.MASS:
         return (
           <Graphics
             draw={(g: PIXI.Graphics) => {
@@ -97,6 +86,32 @@ export const PowerUpEffects: React.FC<Props> = ({
           />
         );
 
+      case PowerUpType.GHOST:
+        return (
+          <Graphics
+            draw={(g: PIXI.Graphics) => {
+              g.clear();
+              g.beginFill(getEffectColor(type), 0.3);
+              g.drawCircle(0, 0, size * 0.7);
+              g.endFill();
+            }}
+          />
+        );
+
+      case PowerUpType.SPLIT:
+        return (
+          <Graphics
+            draw={(g: PIXI.Graphics) => {
+              g.clear();
+              g.lineStyle(2, getEffectColor(type), 0.5);
+              g.moveTo(-size/3, -size/3);
+              g.lineTo(size/3, size/3);
+              g.moveTo(-size/3, size/3);
+              g.lineTo(size/3, -size/3);
+            }}
+          />
+        );
+
       default:
         return null;
     }
@@ -104,14 +119,12 @@ export const PowerUpEffects: React.FC<Props> = ({
 
   return (
     <Container sortableChildren>
-      {/* Active Effects */}
       {activeEffects.map((effect, index) => (
         <Container key={`${effect}-${index}`} zIndex={index}>
           {renderEffect(effect)}
         </Container>
       ))}
 
-      {/* Collect Effect */}
       {showCollectEffect && (
         <Graphics
           draw={(g: PIXI.Graphics) => {
@@ -123,7 +136,6 @@ export const PowerUpEffects: React.FC<Props> = ({
         />
       )}
 
-      {/* Activate Effect */}
       {showActivateEffect && (
         <Graphics
           draw={(g: PIXI.Graphics) => {

@@ -1,118 +1,121 @@
-import React from 'react';
-import styled from 'styled-components';
+import React, { useState, useEffect, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { comboStatsService } from '../services/comboStatsService';
-import { POWER_UP_COMBOS } from '../types/powerups';
+import { POWER_UP_COMBOS, PowerUpCombo } from '../types/powerups';
 
-const ChartContainer = styled.div`
-  position: fixed;
-  right: 20px;
-  bottom: 100px;
-  background: rgba(0, 0, 0, 0.8);
-  border-radius: 12px;
-  padding: 15px;
-  color: white;
-  width: 300px;
-`;
+interface ComboStats {
+  totalActivations: number;
+  successfulHits: number;
+}
 
-const BarChart = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 10px;
-`;
+interface ComboStatEntry {
+  type: string;
+  stats: ComboStats;
+}
 
-const Bar = styled.div<{ width: number; color: string }>`
-  height: 20px;
-  width: ${props => props.width}%;
-  background: ${props => props.color};
-  border-radius: 4px;
-  transition: width 0.3s ease;
-  position: relative;
-  overflow: hidden;
-  
-  &::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: linear-gradient(
-      90deg,
-      rgba(255, 255, 255, 0.1) 0%,
-      rgba(255, 255, 255, 0.2) 50%,
-      rgba(255, 255, 255, 0.1) 100%
-    );
-  }
-`;
+interface BarProps {
+  width: number;
+  color: string;
+  children?: React.ReactNode;
+}
 
-const Label = styled.div`
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-`;
+const Bar: React.FC<BarProps> = ({ width, color, children }) => (
+  <div className="relative h-5">
+    <motion.div
+      className="absolute inset-0 rounded bg-gradient-to-r"
+      style={{ 
+        width: `${width}%`,
+        background: color,
+      }}
+      initial={{ width: 0 }}
+      animate={{ width: `${width}%` }}
+      transition={{ duration: 0.3, ease: 'easeOut' }}
+    >
+      <div className="absolute inset-0 bg-gradient-to-r from-white/10 via-white/20 to-white/10" />
+    </motion.div>
+    {children}
+  </div>
+);
 
-const ChartTitle = styled.h4`
-  margin: 0 0 15px 0;
-  text-align: center;
-`;
+const COMBO_COLORS: Record<string, string> = {
+  'SPEED_SHIELD': 'linear-gradient(90deg, #ffdd00, #00ff00)',
+  'GHOST_SIZE': 'linear-gradient(90deg, #ff00ff, #0000ff)',
+  'POINTS_SPEED': 'linear-gradient(90deg, #ff0000, #ff8800)'
+};
 
 export const ComboStatsChart: React.FC = () => {
-  const [stats, setStats] = React.useState(() => 
-    Object.keys(POWER_UP_COMBOS).map(comboType => ({
-      type: comboType,
-      stats: comboStatsService.getStats(comboType)
-    }))
+  const [stats, setStats] = useState<ComboStatEntry[]>(() => 
+    Object.keys(POWER_UP_COMBOS).map(comboType => {
+      const comboStats = comboStatsService.getStats(comboType);
+      if (!comboStats) {
+        return {
+          type: comboType,
+          stats: { totalActivations: 0, successfulHits: 0 }
+        };
+      }
+      return {
+        type: comboType,
+        stats: comboStats
+      };
+    })
   );
 
-  React.useEffect(() => {
+  useEffect(() => {
     const updateStats = () => {
-      setStats(Object.keys(POWER_UP_COMBOS).map(comboType => ({
-        type: comboType,
-        stats: comboStatsService.getStats(comboType)
-      })));
+      setStats(Object.keys(POWER_UP_COMBOS).map(comboType => {
+        const comboStats = comboStatsService.getStats(comboType);
+        if (!comboStats) {
+          return {
+            type: comboType,
+            stats: { totalActivations: 0, successfulHits: 0 }
+          };
+        }
+        return {
+          type: comboType,
+          stats: comboStats
+        };
+      }));
     };
 
     window.addEventListener('combo-stats-updated', updateStats);
     return () => window.removeEventListener('combo-stats-updated', updateStats);
   }, []);
 
-  const maxActivations = Math.max(
-    ...stats.map(s => s.stats?.totalActivations || 0)
+  const maxActivations = useMemo(() => 
+    Math.max(...stats.map(s => s.stats?.totalActivations || 0)),
+    [stats]
   );
 
-  const getBarColor = (comboType: string): string => {
-    switch (comboType) {
-      case 'SPEED_SHIELD': return 'linear-gradient(90deg, #ffdd00, #00ff00)';
-      case 'MAGNET_GRAVITY': return 'linear-gradient(90deg, #ff00ff, #0000ff)';
-      case 'TELEPORT_SPLIT': return 'linear-gradient(90deg, #ff0000, #ff8800)';
-      default: return '#ffffff';
-    }
-  };
-
   return (
-    <ChartContainer>
-      <ChartTitle>Combo Usage Statistics</ChartTitle>
-      <BarChart>
-        {stats.map(({ type, stats }) => {
-          if (!stats) return null;
-          const combo = POWER_UP_COMBOS[type as keyof typeof POWER_UP_COMBOS];
-          const percentage = (stats.totalActivations / maxActivations) * 100 || 0;
-          
-          return (
-            <div key={type}>
-              <Label>
-                <span>{combo.name}</span>
-                <span>{stats.totalActivations}</span>
-              </Label>
-              <Bar 
-                width={percentage} 
-                color={getBarColor(type)}
-              />
-            </div>
-          );
-        })}
-      </BarChart>
-    </ChartContainer>
+    <div className="fixed right-5 bottom-[100px] bg-black/80 backdrop-blur-sm rounded-xl p-4 text-white w-[300px]">
+      <h4 className="text-center font-bold mb-4">Combo Usage Statistics</h4>
+      <div className="space-y-3">
+        <AnimatePresence mode="popLayout">
+          {stats.map(({ type, stats }) => {
+            if (!stats) return null;
+            const combo = POWER_UP_COMBOS[type as keyof typeof POWER_UP_COMBOS] as PowerUpCombo;
+            const percentage = (stats.totalActivations / maxActivations) * 100 || 0;
+            
+            return (
+              <motion.div
+                key={type}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+              >
+                <div className="flex justify-between text-sm mb-1">
+                  <span>{combo.name}</span>
+                  <span>{stats.totalActivations}</span>
+                </div>
+                <Bar 
+                  width={percentage} 
+                  color={COMBO_COLORS[type] || '#ffffff'}
+                />
+              </motion.div>
+            );
+          })}
+        </AnimatePresence>
+      </div>
+    </div>
   );
 }; 

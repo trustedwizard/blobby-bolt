@@ -1,10 +1,13 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, memo } from 'react';
 import EmojiPicker from 'emoji-picker-react';
 import { useGameStore } from '../store/gameStore';
 import { CircleDot, Loader2 } from 'lucide-react';
 import { RoomList } from './RoomList';
 import { TeamSelector } from './TeamSelector';
 import { socketService } from '../services/socket';
+import { CONFIG } from '../constants/gameConfig';
+import { Blob } from '../types/common';
+import { ErrorBoundary } from './ErrorBoundary';
 
 const COLORS = [
   { name: 'Pink', value: 0xff1a8c },
@@ -23,33 +26,38 @@ const COLORS = [
   { name: 'Plasma Blue', value: 0x33ccff },
   { name: 'Toxic Green', value: 0x33ff00 },
   { name: 'Deep Purple', value: 0x6600ff }
-];
+] as const;
 
 const SUGGESTED_EMOJIS = [
   '😊', '😎', '🤪', '😈', '👻', '🐻', 
   '🦁', '🐯', '🐸', '🦊', '🐱', '🐼',
   '👽', '🤡', '💀', '👾', '🤓', '😍',
   '🥳', '🤩', '😜', '😇', '🤑', '🥵'
-];
+] as const;
 
-export function StartScreen() {
+interface FormState {
+  playerName: string;
+  selectedColor: number;
+  emoji: string;
+}
+
+const StartScreen = memo(() => {
   const [showRooms, setShowRooms] = useState(true);
-  const [playerName, setPlayerName] = useState('');
-  const [selectedColor, setSelectedColor] = useState(COLORS[0].value);
-  const [emoji, setEmoji] = useState('😊');
+  const [formState, setFormState] = useState<FormState>({
+    playerName: '',
+    selectedColor: COLORS[0].value,
+    emoji: SUGGESTED_EMOJIS[0]
+  });
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const { 
-    initializePlayer, 
-    startGame, 
-    joinRoom, 
-    addNotification 
-  } = useGameStore();
   const [isMatchmaking, setIsMatchmaking] = useState(false);
   const [matchmakingStatus, setMatchmakingStatus] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const { initializePlayer, startGame, joinRoom, addNotification } = useGameStore();
 
   useEffect(() => {
-    socketService.setupMatchmakingListeners({
+    const cleanup = socketService.setupMatchmakingListeners({
       onMatchFound: (gameId) => {
         setIsMatchmaking(false);
         joinRoom(gameId);
@@ -59,205 +67,249 @@ export function StartScreen() {
       },
       onMatchmakingError: (error) => {
         setIsMatchmaking(false);
+        setError(error);
         addNotification(error);
       }
     });
+
+    return cleanup;
   }, [joinRoom, addNotification]);
 
   useEffect(() => {
-    socketService.on('room:created', (room) => {
+    const handleRoomCreated = (room: any) => {
       setIsLoading(false);
       console.log('Room created:', room);
-    });
+    };
 
-    socketService.on('room:join:error', (error) => {
+    const handleRoomError = (error: string) => {
       setIsLoading(false);
+      setError(error);
       addNotification(error);
-    });
+    };
+
+    socketService.on('room:created', handleRoomCreated);
+    socketService.on('room:join:error', handleRoomError);
 
     return () => {
-      socketService.off('room:created');
-      socketService.off('room:join:error');
+      socketService.off('room:created', handleRoomCreated);
+      socketService.off('room:join:error', handleRoomError);
     };
   }, [addNotification]);
 
-  const handleStart = () => {
-    if (!playerName.trim()) return;
-  
-    initializePlayer({
-      id: socketService.getSocket()?.id || `player-${Date.now()}`,
-      x: 2000,
-      y: 2000,
-      radius: 30,
-      color: selectedColor,
-      name: playerName.trim(),
-      emoji: emoji,
-      trail: [],
-      score: 0
-    });
-    startGame();
-  };
+  const handleInputChange = useCallback((field: keyof FormState, value: string | number) => {
+    setFormState(prev => ({ ...prev, [field]: value }));
+    setError(null);
+  }, []);
 
-  const startMatchmaking = () => {
-    if (!playerName.trim()) return;
+  const validateForm = useCallback((): boolean => {
+    if (!formState.playerName.trim()) {
+      setError('Please enter a player name');
+      return false;
+    }
+    return true;
+  }, [formState.playerName]);
+
+  const handleStart = useCallback(() => {
+    if (!validateForm()) return;
+
+    const playerData: Partial<Blob> = {
+      name: formState.playerName.trim(),
+      color: formState.selectedColor,
+      emoji: formState.emoji,
+      x: CONFIG.game.worldSize / 2,
+      y: CONFIG.game.worldSize / 2,
+      radius: CONFIG.physics.minBlobSize,
+      mass: CONFIG.physics.startingMass,
+      score: 0,
+      trail: [],
+      velocity: { x: 0, y: 0 },
+      spawnTime: Date.now(),
+      lastUpdateTime: Date.now(),
+      lastRadius: CONFIG.physics.minBlobSize
+    };
+
+    initializePlayer(playerData);
+    startGame();
+  }, [formState, initializePlayer, startGame, validateForm]);
+
+  const startMatchmaking = useCallback(() => {
+    if (!validateForm()) return;
     
     setIsMatchmaking(true);
+    setError(null);
     socketService.findMatch({
-      gameMode: 'ffa', // or get from state if you have game mode selection
-      skillLevel: 1000 // default skill level for new players
+      gameMode: 'ffa',
+      skillLevel: 1000
     });
-  };
+  }, [validateForm]);
 
-  const cancelMatchmaking = () => {
+  const cancelMatchmaking = useCallback(() => {
     setIsMatchmaking(false);
     socketService.cancelMatchmaking();
-  };
+  }, []);
 
-  const handleCreateRoom = () => {
-    if (!playerName.trim()) return;
+  const handleCreateRoom = useCallback(() => {
+    if (!validateForm()) return;
     
+    setIsLoading(true);
+    setError(null);
     socketService.createRoom({
-      name: playerName,
+      name: formState.playerName,
       isPrivate: false,
       gameMode: 'ffa',
       maxPlayers: 10
     });
-    
-    setIsLoading(true);
-  };
+  }, [formState.playerName, validateForm]);
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-black">
-      {showRooms ? (
-        <div className="bg-gray-900/80 backdrop-blur-sm p-8 rounded-lg w-[800px]">
-          <h1 className="text-3xl font-bold text-center text-white mb-8">
-            Blob<span className="text-cyan-400">.by</span>
-          </h1>
-          <RoomList onJoinRoom={(() => setShowRooms(false)) as any} />
-        </div>
-      ) : (
-        <div className="bg-gray-900/80 backdrop-blur-sm p-8 rounded-lg w-96 space-y-6">
-          <h1 className="text-3xl font-bold text-center text-white mb-8">
-            Blob<span className="text-cyan-400">.by</span>
-          </h1>
+    <ErrorBoundary>
+      <div className="fixed inset-0 flex items-center justify-center bg-black">
+        {showRooms ? (
+          <div className="bg-gray-900/80 backdrop-blur-sm p-8 rounded-lg w-[800px]">
+            <h1 className="text-3xl font-bold text-center text-white mb-8">
+              Blob<span className="text-cyan-400">.by</span>
+            </h1>
+            <RoomList onJoinRoom={() => setShowRooms(false)} />
+          </div>
+        ) : (
+          <div className="bg-gray-900/80 backdrop-blur-sm p-8 rounded-lg w-96 space-y-6">
+            <h1 className="text-3xl font-bold text-center text-white mb-8">
+              Blob<span className="text-cyan-400">.by</span>
+            </h1>
 
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">
-                Player Name
-              </label>
-              <input
-                type="text"
-                value={playerName}
-                onChange={(e) => setPlayerName(e.target.value)}
-                className="w-full px-3 py-2 bg-gray-800 rounded-md text-white focus:ring-2 focus:ring-cyan-400 outline-none"
-                placeholder="Enter your name"
-                maxLength={15}
-              />
+            {error && (
+              <div className="bg-red-500/20 border border-red-500 text-red-100 px-4 py-2 rounded-md text-sm">
+                {error}
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">
+                  Player Name
+                </label>
+                <input
+                  type="text"
+                  value={formState.playerName}
+                  onChange={(e) => handleInputChange('playerName', e.target.value)}
+                  className="w-full px-3 py-2 bg-gray-800 rounded-md text-white focus:ring-2 focus:ring-cyan-400 outline-none"
+                  placeholder="Enter your name"
+                  maxLength={15}
+                  aria-label="Player name"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">
+                  Blob Color
+                </label>
+                <div className="flex gap-2 flex-wrap" role="radiogroup">
+                  {COLORS.map((color) => (
+                    <button
+                      key={color.value}
+                      onClick={() => handleInputChange('selectedColor', color.value)}
+                      className="relative w-8 h-8 rounded-full focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                      style={{ backgroundColor: `#${color.value.toString(16).padStart(6, '0')}` }}
+                      aria-label={`Select ${color.name} color`}
+                      aria-pressed={formState.selectedColor === color.value}
+                    >
+                      {formState.selectedColor === color.value && (
+                        <CircleDot className="absolute inset-0 m-auto w-4 h-4 text-white" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">
+                  Blob Face
+                </label>
+                <div className="grid grid-cols-6 gap-2 mb-2">
+                  {SUGGESTED_EMOJIS.map((suggestedEmoji) => (
+                    <button
+                      key={suggestedEmoji}
+                      onClick={() => handleInputChange('emoji', suggestedEmoji)}
+                      className={`w-10 h-10 text-2xl flex items-center justify-center rounded hover:bg-gray-700 ${
+                        suggestedEmoji === formState.emoji ? 'bg-gray-700' : 'bg-gray-800'
+                      }`}
+                      aria-label={`Select emoji ${suggestedEmoji}`}
+                      aria-pressed={suggestedEmoji === formState.emoji}
+                    >
+                      {suggestedEmoji}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                  className="w-full px-3 py-2 bg-gray-800 rounded-md text-sm text-center hover:bg-gray-700"
+                  aria-expanded={showEmojiPicker}
+                >
+                  More Emojis
+                </button>
+                {showEmojiPicker && (
+                  <div className="absolute mt-2 z-50">
+                    <EmojiPicker
+                      onEmojiClick={(emojiData) => {
+                        handleInputChange('emoji', emojiData.emoji);
+                        setShowEmojiPicker(false);
+                      }}
+                      width={320}
+                      height={400}
+                    />
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">
-                Blob Color
-              </label>
-              <div className="flex gap-2 flex-wrap">
-                {COLORS.map((color) => (
+            <TeamSelector />
+
+            <div className="space-y-4">
+              {isMatchmaking ? (
+                <div className="text-center">
+                  <div className="flex items-center justify-center gap-2 text-cyan-400 mb-2">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>Finding match...</span>
+                  </div>
+                  <p className="text-sm text-gray-400">{matchmakingStatus}</p>
                   <button
-                    key={color.value}
-                    onClick={() => setSelectedColor(color.value)}
-                    className="relative w-8 h-8 rounded-full focus:outline-none focus:ring-2 focus:ring-cyan-400"
-                    style={{ backgroundColor: `#${color.value.toString(16).padStart(6, '0')}` }}
+                    onClick={cancelMatchmaking}
+                    className="mt-4 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-md"
                   >
-                    {selectedColor === color.value && (
-                      <CircleDot className="absolute inset-0 m-auto w-4 h-4 text-white" />
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4">
+                  <button
+                    onClick={startMatchmaking}
+                    disabled={isLoading || !formState.playerName.trim()}
+                    className="py-3 bg-cyan-500 hover:bg-cyan-600 text-white font-bold rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isLoading ? (
+                      <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+                    ) : (
+                      'Quick Match'
                     )}
                   </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">
-                Blob Face
-              </label>
-              <div className="grid grid-cols-6 gap-2 mb-2">
-                {SUGGESTED_EMOJIS.map((suggestedEmoji) => (
                   <button
-                    key={suggestedEmoji}
-                    onClick={() => setEmoji(suggestedEmoji)}
-                    className={`w-10 h-10 text-2xl flex items-center justify-center rounded hover:bg-gray-700 ${
-                      suggestedEmoji === emoji ? 'bg-gray-700' : 'bg-gray-800'
-                    }`}
+                    onClick={() => setShowRooms(true)}
+                    disabled={isLoading}
+                    className="py-3 bg-gray-700 hover:bg-gray-600 text-white font-bold rounded-md transition-colors disabled:opacity-50"
                   >
-                    {suggestedEmoji}
+                    Browse Rooms
                   </button>
-                ))}
-              </div>
-              <button
-                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                className="w-full px-3 py-2 bg-gray-800 rounded-md text-sm text-center hover:bg-gray-700"
-              >
-                More Emojis
-              </button>
-              {showEmojiPicker && (
-                <div className="absolute mt-2 z-50">
-                  <EmojiPicker
-                    onEmojiClick={(emojiData) => {
-                      setEmoji(emojiData.emoji);
-                      setShowEmojiPicker(false);
-                    }}
-                    width={320}
-                    height={400}
-                  />
                 </div>
               )}
             </div>
           </div>
-
-          <TeamSelector />
-
-          <div className="space-y-4">
-            {isMatchmaking ? (
-              <div className="text-center">
-                <div className="flex items-center justify-center gap-2 text-cyan-400 mb-2">
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Finding match...</span>
-                </div>
-                <p className="text-sm text-gray-400">{matchmakingStatus}</p>
-                <button
-                  onClick={cancelMatchmaking}
-                  className="mt-4 px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-md"
-                >
-                  Cancel
-                </button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-4">
-                <button
-                  onClick={startMatchmaking}
-                  disabled={!playerName.trim()}
-                  className="py-3 bg-cyan-500 hover:bg-cyan-600 text-white font-bold rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Quick Match
-                </button>
-                <button
-                  onClick={() => setShowRooms(true)}
-                  className="py-3 bg-gray-700 hover:bg-gray-600 text-white font-bold rounded-md transition-colors"
-                >
-                  Browse Rooms
-                </button>
-                <button
-                  onClick={handleStart}
-                  disabled={!playerName.trim()}
-                  className="py-3 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Practice Mode
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </ErrorBoundary>
   );
-}
+});
+
+StartScreen.displayName = 'StartScreen';
+
+export default StartScreen;

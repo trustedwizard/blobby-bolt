@@ -1,7 +1,7 @@
-import * as PIXI from 'pixi.js';
+import { Application, Container, Graphics } from 'pixi.js';
 import { Position } from '../types/common';
+import { EffectConfig, PowerUpVisualEffect, CollisionEffect } from '../types/effects';
 import { ObjectPool } from '../utils/objectPool';
-import { BaseSystem } from './BaseSystem';
 
 interface ParticleEffect {
   id: string;
@@ -10,31 +10,22 @@ interface ParticleEffect {
   color: number;
   duration: number;
   startTime: number;
-  particles: PIXI.Graphics[];
+  particles: Graphics[];
 }
 
-export interface IVisualEffectsSystem extends BaseSystem {
-  createPowerUpEffect(position: Position, color: number): void;
-  createCollisionEffect(position: Position, color: number): void;
-  createGrowthEffect(position: Position, color: number): void;
-  update(): void;
-  dispose(): void;
-}
+export class VisualEffectsSystem {
+  private app: Application | null = null;
+  private container: Container | null = null;
+  private config: EffectConfig | null = null;
+  private effects: Map<string, ParticleEffect> = new Map();
+  private particlePool: ObjectPool<Graphics>;
 
-export class VisualEffectsSystem extends BaseSystem implements IVisualEffectsSystem {
-  private particlePool: ObjectPool<PIXI.Graphics>;
-  private activeEffects: Map<string, ParticleEffect>;
-  private container: PIXI.Container;
-
-  private constructor(container: PIXI.Container) {
-    super();
-    this.container = container;
-    this.activeEffects = new Map();
-    this.particlePool = new ObjectPool<PIXI.Graphics>(
+  constructor() {
+    this.particlePool = new ObjectPool<Graphics>(
       () => {
-        const graphics = new PIXI.Graphics();
+        const graphics = new Graphics();
         graphics.beginFill(0xFFFFFF);
-        graphics.drawPolygon([0, -4, 4, 4, -4, 4]);
+        graphics.drawCircle(0, 0, 4);
         graphics.endFill();
         return graphics;
       },
@@ -44,155 +35,132 @@ export class VisualEffectsSystem extends BaseSystem implements IVisualEffectsSys
     );
   }
 
-  public static getInstance(container: PIXI.Container): VisualEffectsSystem {
-    if (!VisualEffectsSystem.instance) {
-      VisualEffectsSystem.instance = new VisualEffectsSystem(container);
-    }
-    return VisualEffectsSystem.instance;
+  init(app: Application, config: EffectConfig): void {
+    this.app = app;
+    this.config = config;
+    this.container = new Container();
+    app.stage.addChild(this.container);
   }
 
-  public createGrowthEffect(position: Position, color: number): void {
-    const effect: ParticleEffect = {
-      id: `growth-${Date.now()}`,
-      type: 'grow' as const,
-      position,
-      color,
-      duration: 500,
-      startTime: Date.now(),
-      particles: []
-    };
+  createPowerUpEffect(position: Position, color: number): void {
+    if (!this.app || !this.container || !this.config) return;
 
-    const particles = Array.from({ length: 8 }, (_, i) => {
-      const angle = (i / 8) * Math.PI * 2;
+    const particles = Array.from({ length: 12 }, () => {
       const particle = this.particlePool.acquire();
-      
       particle.clear()
-        .beginFill(color, 0.6)
+        .beginFill(color, 0.8)
         .drawCircle(0, 0, 4)
         .endFill();
-
-      particle.position.set(
-        position.x + Math.cos(angle) * 20,
-        position.y + Math.sin(angle) * 20
-      );
-
-      particle.alpha = 1;
-      this.container.addChild(particle);
-
       return particle;
     });
 
-    effect.particles = particles;
-    this.activeEffects.set(effect.id, effect);
-  }
-
-  public createPowerUpEffect(position: Position, color: number): void {
-    const effect = {
+    const effect: ParticleEffect = {
       id: `powerup-${Date.now()}`,
-      type: 'powerup' as const,
+      type: 'powerup',
       position,
       color,
-      duration: 1000,
+      duration: this.config.defaultDuration,
       startTime: Date.now(),
-      particles: []
+      particles
     };
 
-    const particles = Array.from({ length: 12 }, (_, i) => {
-      const angle = (i / 12) * Math.PI * 2;
-      const particle = this.particlePool.acquire();
-      
-      particle.clear()
-        .beginFill(color, 0.8);
-      
-      const outerRadius = 8;
-      const innerRadius = 4;
-      for (let i = 0; i < 5; i++) {
-        const startAngle = (i * 4 * Math.PI) / 5;
-        const endAngle = ((i * 4 + 2) * Math.PI) / 5;
-        
-        if (i === 0) {
-          particle.moveTo(
-            Math.cos(startAngle) * outerRadius,
-            Math.sin(startAngle) * outerRadius
-          );
-        }
-        
-        particle.lineTo(
-          Math.cos(startAngle) * outerRadius,
-          Math.sin(startAngle) * outerRadius
-        );
-        particle.lineTo(
-          Math.cos(endAngle) * innerRadius,
-          Math.sin(endAngle) * innerRadius
-        );
-      }
-      
-      particle.closePath()
-        .endFill();
-
+    particles.forEach((particle, i) => {
+      const angle = (i / particles.length) * Math.PI * 2;
+      const distance = 30;
       particle.position.set(
-        position.x + Math.cos(angle) * 30,
-        position.y + Math.sin(angle) * 30
+        position.x + Math.cos(angle) * distance,
+        position.y + Math.sin(angle) * distance
       );
-
-      particle.alpha = 1;
-      this.container.addChild(particle);
-
-      return particle;
+      this.container!.addChild(particle);
     });
 
-    this.activeEffects.set(effect.id, { ...effect, particles });
+    this.effects.set(effect.id, effect);
   }
 
-  public createCollisionEffect(position: Position, color: number): void {
-    const effect = {
-      id: `collision-${Date.now()}`,
-      type: 'collision' as const,
-      position,
-      color,
-      duration: 300,
-      startTime: Date.now(),
-      particles: []
-    };
+  createCollisionEffect(position: Position, color: number): void {
+    if (!this.app || !this.container || !this.config) return;
 
-    const particles = Array.from({ length: 16 }, (_, i) => {
-      const angle = (i / 16) * Math.PI * 2;
+    const particles = Array.from({ length: 16 }, () => {
       const particle = this.particlePool.acquire();
-      
       particle.clear()
         .beginFill(color, 0.7)
         .drawCircle(0, 0, 3)
         .endFill();
+      return particle;
+    });
 
+    const effect: ParticleEffect = {
+      id: `collision-${Date.now()}`,
+      type: 'collision',
+      position,
+      color,
+      duration: 300,
+      startTime: Date.now(),
+      particles
+    };
+
+    particles.forEach((particle, i) => {
+      const angle = (i / particles.length) * Math.PI * 2;
       const distance = 20 + Math.random() * 20;
       particle.position.set(
         position.x + Math.cos(angle) * distance,
         position.y + Math.sin(angle) * distance
       );
+      this.container!.addChild(particle);
+    });
 
-      particle.alpha = 1;
-      this.container.addChild(particle);
+    this.effects.set(effect.id, effect);
+  }
 
+  createGrowthEffect(position: Position, color: number): void {
+    if (!this.app || !this.container || !this.config) return;
+
+    const particles = Array.from({ length: 8 }, () => {
+      const particle = this.particlePool.acquire();
+      particle.clear()
+        .beginFill(color, 0.6)
+        .drawCircle(0, 0, 4)
+        .endFill();
       return particle;
     });
 
-    this.activeEffects.set(effect.id, { ...effect, particles });
+    const effect: ParticleEffect = {
+      id: `growth-${Date.now()}`,
+      type: 'grow',
+      position,
+      color,
+      duration: 500,
+      startTime: Date.now(),
+      particles
+    };
+
+    particles.forEach((particle, i) => {
+      const angle = (i / particles.length) * Math.PI * 2;
+      const distance = 20;
+      particle.position.set(
+        position.x + Math.cos(angle) * distance,
+        position.y + Math.sin(angle) * distance
+      );
+      this.container!.addChild(particle);
+    });
+
+    this.effects.set(effect.id, effect);
   }
 
-  public update(): void {
+  update(deltaTime: number): void {
     const now = Date.now();
 
-    for (const [id, effect] of this.activeEffects.entries()) {
+    for (const [id, effect] of this.effects.entries()) {
       const elapsed = now - effect.startTime;
       const progress = Math.min(1, elapsed / effect.duration);
 
       if (progress >= 1) {
         // Clean up effect
         effect.particles.forEach(particle => {
-          this.container.removeChild(particle);
+          this.container?.removeChild(particle);
           this.particlePool.release(particle);
         });
-        this.activeEffects.delete(id);
+        this.effects.delete(id);
         continue;
       }
 
@@ -255,14 +223,16 @@ export class VisualEffectsSystem extends BaseSystem implements IVisualEffectsSys
     });
   }
 
-  protected cleanupResources(): void {
-    for (const [id, effect] of this.activeEffects.entries()) {
+  destroy(): void {
+    this.effects.forEach(effect => {
       effect.particles.forEach(particle => {
-        this.container.removeChild(particle);
-        this.particlePool.release(particle);
+        particle.destroy();
       });
-      this.activeEffects.delete(id);
-    }
+    });
+    this.effects.clear();
     this.particlePool.clear();
+    this.container?.destroy();
+    this.container = null;
+    this.app = null;
   }
 } 

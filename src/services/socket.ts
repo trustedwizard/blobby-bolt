@@ -1,12 +1,10 @@
-import { io, Socket } from 'socket.io-client';
-import { PowerUp, PowerUpType } from '../types/powerups';
+import io, { Socket } from 'socket.io-client';
 import { useGameStore } from '../store/gameStore';
 import { soundService } from '../services/soundService';
-import { POWER_UP_CONFIG } from '../store/gameStore';
+import { CONFIG } from '../constants/gameConfig';
 import { LeaderboardEntry, LeaderboardUpdate, ComboStats } from '../types/leaderboard';
 import { MatchPreferences } from '../types/matchmaking';
-
-const SOCKET_URL = 'http://localhost:3001';
+import { PowerUpType } from '../types/powerups';
 
 interface MatchmakingPreferences {
   gameMode: 'ffa' | 'teams' | 'battle-royale';
@@ -15,36 +13,38 @@ interface MatchmakingPreferences {
 }
 
 export class SocketService {
-  private static instance: SocketService | null = null;
   private socket: Socket | null = null;
+  private static instance: SocketService;
 
-  private constructor() {
-    // Private constructor for singleton
-  }
+  private constructor() {}
 
-  public static getInstance(): SocketService {
+  static getInstance(): SocketService {
     if (!SocketService.instance) {
       SocketService.instance = new SocketService();
     }
     return SocketService.instance;
   }
 
-  public async initSocket(): Promise<Socket> {
-    if (this.socket?.connected) {
-      return this.socket;
-    }
+  getSocket(): Socket | null {
+    return this.socket;
+  }
 
-    if (this.socket) {
-      this.socket.close();
-      this.socket = null;
-    }
+  connect(serverUrl: string = 'http://localhost:3001'): void {
+    if (this.socket?.connected) return;
 
-    this.socket = io(SOCKET_URL, {
-      reconnectionDelayMax: 10000,
-      withCredentials: true,
+    this.socket = io(serverUrl, {
+      transports: ['websocket'],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000
     });
 
-    // Core game state handlers
+    this.setupEventHandlers();
+  }
+
+  private setupEventHandlers(): void {
+    if (!this.socket) return;
+
     this.socket.on('connect', () => {
       console.log('Connected to server');
       useGameStore.setState({ isConnected: true });
@@ -57,160 +57,72 @@ export class SocketService {
 
     this.socket.on('game:state', (gameState) => {
       useGameStore.setState({
-        blobs: gameState.players || [],
+        players: new Map(gameState.players || []),
         food: new Map(gameState.food || []),
-        powerUps: gameState.powerUps || [],
+        powerUps: new Map(gameState.powerUps || []),
+        obstacles: new Map(gameState.obstacles || []),
         leaderboard: gameState.leaderboard || []
       });
     });
 
     // Matchmaking handlers
     this.socket.on('matchmaking:status', (status: string) => {
-      useGameStore.setState(state => ({
+      useGameStore.setState({
         matchmaking: {
-          ...state.matchmaking,
+          ...useGameStore.getState().matchmaking,
           status
         }
-      }));
+      });
     });
 
     this.socket.on('matchmaking:found', (gameId: string) => {
-      useGameStore.setState(state => ({
+      useGameStore.setState({
         matchmaking: {
-          ...state.matchmaking,
+          ...useGameStore.getState().matchmaking,
           isSearching: false,
           status: 'found'
         }
-      }));
+      });
       this.emit('game:join', { gameId });
     });
 
     // Player update handlers
-    this.socket.on('player:updated', (update) => {
+    this.socket.on('player:update', (update) => {
       const state = useGameStore.getState();
       if (state.player?.id !== update.id) {
-        state.updatePlayerPosition(
-          update.id,
-          update.position,
-          1/60 // Default delta time
-        );
+        const players = new Map(state.players);
+        players.set(update.id, {
+          ...players.get(update.id),
+          ...update
+        });
+        useGameStore.setState({ players });
       }
     });
 
     // Power-up handlers
-    this.socket.on('powerup:spawn', (powerUp: PowerUp) => {
-      useGameStore.setState(state => ({
-        powerUps: Array.isArray(state.powerUps) ? [...state.powerUps, powerUp] : [powerUp]
-      }));
+    this.socket.on('powerup:spawn', (powerUp) => {
+      const powerUps = new Map(useGameStore.getState().powerUps);
+      powerUps.set(powerUp.id, powerUp);
+      useGameStore.setState({ powerUps });
     });
 
-    this.socket.on('powerup:collected', ({ powerUpId, playerId }) => {
-      useGameStore.setState(state => ({
-        powerUps: state.powerUps.filter(p => p.id !== powerUpId)
-      }));
-      
-      if (useGameStore.getState().player?.id === playerId) {
-        soundService.play('powerup-collect');
-      }
-    });
-
-    this.socket.on('powerup:activated', (data: {
-      powerUpId: string;
-      playerId: string;
-      type: PowerUpType;
-    }) => {
+    this.socket.on('powerup:collected', (data: { powerUpId: string, playerId: string, type: PowerUpType }) => {
       const state = useGameStore.getState();
-      const powerUp = state.powerUps.find(p => p.id === data.powerUpId);
-      if (!powerUp) return;
-
-      useGameStore.setState(state => ({
-        activePowerUps: [...state.activePowerUps, {
-          ...powerUp,
-          playerId: data.playerId,
-          expiresAt: Date.now() + POWER_UP_CONFIG.DURATIONS[data.type]
-        }]
-      }));
-    });
-
-    return this.socket;
-  }
-
-  // Simplified power-up handlers
-  public initializePowerUpHandlers(): void {
-    if (!this.socket) return;
-
-    this.socket.on('powerup:spawn', (powerUp: PowerUp) => {
-      useGameStore.setState(state => ({
-        powerUps: Array.isArray(state.powerUps) ? [...state.powerUps, powerUp] : [powerUp]
-      }));
-    });
-
-    this.socket.on('powerup:collected', ({ powerUpId, playerId }) => {
-      useGameStore.setState(state => ({
-        powerUps: state.powerUps.filter(p => p.id !== powerUpId)
-      }));
+      const powerUps = new Map(state.powerUps);
+      powerUps.delete(data.powerUpId);
       
-      if (useGameStore.getState().player?.id === playerId) {
-        soundService.play('powerup-collect');
-      }
+      useGameStore.setState({ powerUps });
+      useGameStore.getState().handlePowerUpCollect(data.powerUpId, data.playerId, data.type);
     });
-  }
 
-  // Clean up leaderboard handlers
-  public initializeLeaderboardHandlers(): void {
-    if (!this.socket) return;
-
+    // Restore leaderboard handlers
     this.socket.on('leaderboard:update', (leaderboard) => {
       useGameStore.setState({ leaderboard });
     });
   }
 
-  // Basic emit wrapper
-  public emit<T = any>(event: string, data: T): void {
-    if (this.socket?.connected) {
-      this.socket.emit(event, data);
-    } else {
-      console.warn(`Attempted to emit '${event}' but socket is not connected`);
-    }
-  }
-
-  public dispose(): void {
-    if (this.socket) {
-      this.socket.removeAllListeners();
-      this.socket.disconnect();
-      this.socket = null;
-    }
-    SocketService.instance = null;
-  }
-
-  public on<T = any>(event: string, callback: (data: T) => void): void {
-    if (this.socket) {
-      this.socket.on(event, callback);
-    } else {
-      console.warn(`Attempted to add listener for '${event}' but socket is not initialized`);
-    }
-  }
-
-  public off<T = any>(event: string, callback?: (data: T) => void): void {
-    if (this.socket) {
-      this.socket.off(event, callback);
-    }
-  }
-
-  public collectPowerUp(powerUpId: string): void {
-    const state = useGameStore.getState();
-    if (!this.socket || !state.player) {
-      console.warn('Cannot collect power-up: No socket or player');
-      return;
-    }
-
-    this.socket.emit('powerup:collect', {
-      powerUpId,
-      playerId: state.player.id
-    });
-  }
-
-  public setupMatchmakingListeners(callbacks: {
+  // Restore matchmaking methods
+  setupMatchmakingListeners(callbacks: {
     onMatchFound: (gameId: string) => void;
     onMatchmakingStatus: (status: string) => void;
     onMatchmakingError: (error: string) => void;
@@ -231,7 +143,7 @@ export class SocketService {
     this.socket.on('matchmaking:error', callbacks.onMatchmakingError);
   }
 
-  public findMatch(preferences: MatchmakingPreferences): void {
+  findMatch(preferences: MatchmakingPreferences): void {
     if (!this.socket?.connected) {
       console.warn('Cannot find match: Socket not connected');
       return;
@@ -239,7 +151,7 @@ export class SocketService {
     this.socket.emit('matchmaking:start', preferences);
   }
 
-  public cancelMatchmaking(): void {
+  cancelMatchmaking(): void {
     if (!this.socket?.connected) {
       console.warn('Cannot cancel matchmaking: Socket not connected');
       return;
@@ -247,11 +159,8 @@ export class SocketService {
     this.socket.emit('matchmaking:cancel');
   }
 
-  public getSocket(): Socket | null {
-    return this.socket;
-  }
-
-  public createRoom(roomConfig: {
+  // Restore room management methods
+  createRoom(roomConfig: {
     name: string;
     isPrivate: boolean;
     password?: string;
@@ -272,12 +181,43 @@ export class SocketService {
     });
   }
 
-  public joinRoom(roomId: string, password?: string): void {
+  joinRoom(roomId: string, password?: string): void {
     if (!this.socket?.connected) {
       console.warn('Cannot join room: Socket not connected');
       return;
     }
     this.socket.emit('room:join', { roomId, password });
+  }
+
+  // Basic socket methods
+  emit(event: string, data?: any): void {
+    if (this.socket?.connected) {
+      this.socket.emit(event, data);
+    } else {
+      console.warn(`Attempted to emit '${event}' but socket is not connected`);
+    }
+  }
+
+  on<T = any>(event: string, callback: (data: T) => void): void {
+    if (this.socket) {
+      this.socket.on(event, callback);
+    } else {
+      console.warn(`Attempted to add listener for '${event}' but socket is not initialized`);
+    }
+  }
+
+  off<T = any>(event: string, callback?: (data: T) => void): void {
+    if (this.socket) {
+      this.socket.off(event, callback);
+    }
+  }
+
+  disconnect(): void {
+    if (this.socket) {
+      this.socket.removeAllListeners();
+      this.socket.disconnect();
+      this.socket = null;
+    }
   }
 }
 
