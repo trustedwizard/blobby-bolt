@@ -321,4 +321,13 @@ export class FoodSystem {
   getFoodCount() {
     return this.foodItems.size;
   }
+
+  generateInitialFood(playerCount = 1) {
+    const targetCount = this.calculateTargetFoodCount(playerCount);
+    logger.info('Generating initial food', {
+      targetCount,
+      playerCount
+    });
+    return this.spawnFood(targetCount);
+  }
 } 

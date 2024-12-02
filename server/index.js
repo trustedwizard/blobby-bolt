@@ -359,13 +359,8 @@ io.on('connection', (socket) => {
   // Room management
   socket.on('room:create', (roomConfig) => {
     try {
-      const room = {
-        ...roomConfig,
-        players: new Map(),
-        state: 'waiting'
-      };
-      
-      gameState.rooms.set(room.id, room);
+      logger.info('Creating room:', roomConfig);
+      const room = gameState.createRoom(roomConfig);
       socket.join(room.id);
       io.emit('room:created', room);
       logger.info(`Room created: ${room.id}`);
@@ -375,9 +370,9 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('room:join', ({ roomId, password }) => {
+  socket.on('room:join', ({ roomId, password, playerData }) => {
     try {
-      const room = gameState.rooms.get(roomId);
+      const room = gameState.getRoom(roomId);
       if (!room) {
         socket.emit('room:join:error', 'Room not found');
         return;
@@ -393,13 +388,58 @@ io.on('connection', (socket) => {
         return;
       }
 
+      const player = {
+        id: socket.id,
+        name: playerData.name || `Player ${socket.id}`,
+        isReady: false,
+        isConnected: true,
+        lastPing: Date.now(),
+        stats: {
+          score: 0,
+          kills: 0,
+          deaths: 0,
+          foodEaten: 0,
+          timeAlive: 0,
+          highestMass: 0,
+          maxCombo: 0,
+          powerUpsCollected: 0
+        }
+      };
+
       socket.join(roomId);
-      room.players.set(socket.id, { id: socket.id });
-      io.to(roomId).emit('room:player:joined', { playerId: socket.id });
+      gameState.addPlayerToRoom(roomId, socket.id, player);
+      io.to(roomId).emit('room:player:joined', { roomId, playerId: socket.id, player });
       logger.info(`Player ${socket.id} joined room ${roomId}`);
     } catch (error) {
       logger.error('Error joining room:', error);
       socket.emit('room:join:error', 'Failed to join room');
+    }
+  });
+
+  // Game state updates
+  socket.on('player:move', (data) => {
+    const player = gameState.getPlayer(socket.id);
+    if (player) {
+      player.x = data.x;
+      player.y = data.y;
+      player.velocity = data.velocity;
+      socket.broadcast.emit('player:update', player);
+    }
+  });
+
+  socket.on('player:split', () => {
+    const player = gameState.getPlayer(socket.id);
+    if (player) {
+      gameState.splitPlayer(socket.id);
+      io.emit('player:split', { playerId: socket.id });
+    }
+  });
+
+  socket.on('player:eject', () => {
+    const player = gameState.getPlayer(socket.id);
+    if (player) {
+      gameState.ejectMass(socket.id);
+      io.emit('player:eject', { playerId: socket.id });
     }
   });
 
@@ -408,17 +448,15 @@ io.on('connection', (socket) => {
     // Clean up rooms
     for (const [roomId, room] of gameState.rooms) {
       if (room.players.has(socket.id)) {
-        room.players.delete(socket.id);
-        io.to(roomId).emit('room:player:left', { playerId: socket.id });
+        gameState.removePlayerFromRoom(roomId, socket.id);
+        io.to(roomId).emit('room:player:left', { roomId, playerId: socket.id });
         
-        // Remove empty rooms
+        // If room is empty, remove it
         if (room.players.size === 0) {
-          gameState.rooms.delete(roomId);
+          gameState.removeRoom(roomId);
           io.emit('room:removed', { roomId });
         }
       }
     }
   });
-
-  // ... rest of the socket event handlers ...
 });

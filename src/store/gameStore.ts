@@ -33,6 +33,8 @@ interface GameStore extends GameState {
   isConnected: boolean;
   matchmaking: MatchmakingState;
   rooms: Map<string, Room>;
+  gameStarted: boolean;
+  gameResults: any | null;
   
   // Actions
   setSocket: (socket: Socket) => void;
@@ -78,6 +80,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     status: 'idle'
   },
   rooms: new Map(),
+  gameStarted: false,
+  gameResults: null,
 
   // Actions
   setSocket: (socket) => set({ socket }),

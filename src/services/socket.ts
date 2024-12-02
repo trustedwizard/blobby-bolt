@@ -1,6 +1,7 @@
 import io, { Socket } from 'socket.io-client';
 import { useGameStore } from '../store/gameStore';
 import { PowerUpType } from '../types/powerups';
+import { Player, Room } from '../types/game';
 
 interface MatchmakingPreferences {
   gameMode: 'ffa' | 'teams' | 'battle-royale';
@@ -81,6 +82,39 @@ export class SocketService {
       useGameStore.setState({ isConnected: false });
     });
 
+    // Room event handlers
+    this.socket.on('room:created', (room: Room) => {
+      console.log('Room created:', room);
+      const rooms = new Map(useGameStore.getState().rooms);
+      rooms.set(room.id, room);
+      useGameStore.setState({ rooms });
+    });
+
+    this.socket.on('room:removed', ({ roomId }: { roomId: string }) => {
+      const rooms = new Map(useGameStore.getState().rooms);
+      rooms.delete(roomId);
+      useGameStore.setState({ rooms });
+    });
+
+    this.socket.on('room:player:joined', ({ roomId, playerId, player }: { roomId: string; playerId: string; player: Player }) => {
+      const rooms = new Map(useGameStore.getState().rooms);
+      const room = rooms.get(roomId);
+      if (room) {
+        room.players.set(playerId, player);
+        useGameStore.setState({ rooms });
+      }
+    });
+
+    this.socket.on('room:player:left', ({ roomId, playerId }: { roomId: string; playerId: string }) => {
+      const rooms = new Map(useGameStore.getState().rooms);
+      const room = rooms.get(roomId);
+      if (room) {
+        room.players.delete(playerId);
+        useGameStore.setState({ rooms });
+      }
+    });
+
+    // Game state handlers
     this.socket.on('game:state', (gameState) => {
       useGameStore.setState({
         players: new Map(gameState.players || []),
@@ -145,6 +179,30 @@ export class SocketService {
     this.socket.on('leaderboard:update', (leaderboard) => {
       useGameStore.setState({ leaderboard });
     });
+
+    // Game events
+    this.socket.on('game:start', () => {
+      useGameStore.setState({ gameStarted: true });
+    });
+
+    this.socket.on('game:end', (results) => {
+      useGameStore.setState({ 
+        gameStarted: false,
+        gameResults: results
+      });
+    });
+
+    // Error handlers
+    this.socket.on('error', (error) => {
+      console.error('Socket error:', error);
+      useGameStore.getState().addNotification(`Error: ${error.message}`);
+    });
+
+    // Disconnection handler
+    this.socket.on('disconnect', () => {
+      console.log('Disconnected from server');
+      useGameStore.setState({ isConnected: false });
+    });
   }
 
   // Matchmaking methods
@@ -200,33 +258,53 @@ export class SocketService {
     gameMode: 'ffa' | 'teams' | 'battle-royale';
     maxPlayers: number;
   }): Promise<void> {
-    if (!this.socket?.connected) {
-      if (!this.isInitializing) {
-        await this.connect();
-      } else {
-        await this.initializationPromise;
+    try {
+      if (!this.socket?.connected) {
+        if (!this.isInitializing) {
+          await this.connect();
+        } else {
+          await this.initializationPromise;
+        }
       }
-    }
 
-    if (!this.socket?.connected) {
-      throw new Error('Failed to establish socket connection');
+      if (!this.socket?.connected) {
+        throw new Error('Failed to establish socket connection');
+      }
+      
+      const roomId = `room-${Date.now()}`;
+      this.socket.emit('room:create', {
+        ...roomConfig,
+        id: roomId,
+        players: [],
+        teams: roomConfig.gameMode === 'teams' ? [] : undefined
+      });
+    } catch (error) {
+      console.error('Failed to create room:', error);
+      useGameStore.getState().addNotification('Failed to create room. Please try again.');
+      throw error;
     }
-    
-    const roomId = `room-${Date.now()}`;
-    this.socket.emit('room:create', {
-      ...roomConfig,
-      id: roomId,
-      players: [],
-      teams: roomConfig.gameMode === 'teams' ? [] : undefined
-    });
   }
 
-  joinRoom(roomId: string, password?: string): void {
-    if (!this.socket?.connected) {
-      console.warn('Cannot join room: Socket not connected');
-      return;
+  async joinRoom(roomId: string, password?: string): Promise<void> {
+    try {
+      if (!this.socket?.connected) {
+        if (!this.isInitializing) {
+          await this.connect();
+        } else {
+          await this.initializationPromise;
+        }
+      }
+
+      if (!this.socket?.connected) {
+        throw new Error('Failed to establish socket connection');
+      }
+
+      this.socket.emit('room:join', { roomId, password });
+    } catch (error) {
+      console.error('Failed to join room:', error);
+      useGameStore.getState().addNotification('Failed to join room. Please try again.');
+      throw error;
     }
-    this.socket.emit('room:join', { roomId, password });
   }
 
   // Basic socket methods with auto-connect
