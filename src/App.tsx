@@ -1,16 +1,16 @@
 import React from 'react';
-import { Game } from './components/Game';
-import { StartScreen } from './components/StartScreen';
 import { useGameStore } from './store/gameStore';
+import StartScreen from './components/StartScreen';
+import Game from './components/Game';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 function App() {
-  const { gameStarted } = useGameStore();
+  const player = useGameStore(state => state.player);
 
   return (
     <ErrorBoundary>
-      <div className="w-screen h-screen overflow-hidden bg-black">
-        {gameStarted ? <Game /> : <StartScreen />}
+      <div className="h-screen w-screen overflow-hidden">
+        {player ? <Game /> : <StartScreen />}
       </div>
     </ErrorBoundary>
   );
