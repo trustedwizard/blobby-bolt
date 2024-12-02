@@ -58,10 +58,12 @@ const OBSTACLE_TYPES = {
 
 export class ObstacleSystem {
   constructor(worldSize = config.worldSize) {
-    this.worldSize = worldSize;
+    // Validate and sanitize worldSize
+    this.worldSize = Math.max(1000, Math.min(10000, Number(worldSize) || 4000));
     this.obstacles = new Map();
-    this.grid = this.initializeGrid();
     this.cellSize = 100;
+    this.gridSize = Math.max(1, Math.min(100, Math.ceil(this.worldSize / this.cellSize)));
+    this.grid = this.initializeGrid();
     this.lastUpdateTime = Date.now();
     this.updateInterval = 100;
     this.obstacleTypes = OBSTACLE_TYPES;
@@ -72,10 +74,50 @@ export class ObstacleSystem {
     logger.info('ObstacleSystem initialized', {
       worldSize: this.worldSize,
       cellSize: this.cellSize,
+      gridSize: this.gridSize,
       updateInterval: this.updateInterval,
       maxObstacles: this.maxObstacles,
       obstacleTypes: Object.keys(this.obstacleTypes)
     });
+  }
+
+  initializeGrid() {
+    try {
+      return Array(this.gridSize).fill(null).map(() => 
+        Array(this.gridSize).fill(null).map(() => new Set())
+      );
+    } catch (error) {
+      logger.error('Failed to initialize obstacle grid', {
+        gridSize: this.gridSize,
+        worldSize: this.worldSize,
+        cellSize: this.cellSize,
+        error: error.message
+      });
+      // Fallback to a smaller grid if initialization fails
+      this.gridSize = 50;
+      return Array(this.gridSize).fill(null).map(() => 
+        Array(this.gridSize).fill(null).map(() => new Set())
+      );
+    }
+  }
+
+  removeObstacle(id) {
+    const obstacle = this.obstacles.get(id);
+    if (obstacle) {
+      this.removeFromGrid(obstacle);
+      this.obstacles.delete(id);
+
+      // Handle linked teleporters
+      if (obstacle.type === 'TELEPORTER' && obstacle.linkedTeleporterId) {
+        this.removeObstacle(obstacle.linkedTeleporterId);
+      }
+
+      logger.debug('Obstacle removed', {
+        id,
+        type: obstacle.type,
+        position: { x: obstacle.x, y: obstacle.y }
+      });
+    }
   }
 
   update() {
@@ -377,34 +419,6 @@ export class ObstacleSystem {
     }
     
     return false;
-  }
-
-  removeObstacle(obstacleId) {
-    const obstacle = this.obstacles.get(obstacleId);
-    if (!obstacle) return false;
-
-    // Clean up teleporter pairs
-    if (obstacle.type === 'TELEPORTER' && obstacle.linkedTeleporterId) {
-      this.removeObstacle(obstacle.linkedTeleporterId);
-    }
-
-    this.removeFromGrid(obstacle);
-    this.obstacles.delete(obstacleId);
-
-    logger.debug('Obstacle removed', {
-      obstacleId,
-      type: obstacle.type,
-      position: { x: obstacle.x, y: obstacle.y }
-    });
-
-    return true;
-  }
-
-  initializeGrid() {
-    const gridSize = Math.ceil(this.worldSize / this.cellSize);
-    return Array(gridSize).fill(null).map(() => 
-      Array(gridSize).fill(null).map(() => new Set())
-    );
   }
 
   generateMap(template) {

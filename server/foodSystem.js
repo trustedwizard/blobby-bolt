@@ -35,22 +35,24 @@ const FOOD_TYPES = {
 
 export class FoodSystem {
   constructor(worldSize = config.worldSize, minFoodPerPlayer = 10, maxFoodPerPlayer = 15) {
-    this.worldSize = worldSize;
+    // Validate and sanitize worldSize
+    this.worldSize = Math.max(1000, Math.min(10000, Number(worldSize) || 4000));
     this.minFoodPerPlayer = minFoodPerPlayer;
     this.maxFoodPerPlayer = maxFoodPerPlayer;
     this.maxTotalFood = 300;
     this.foodItems = new Map();
     this.cellSize = 100;
+    this.gridSize = Math.max(1, Math.min(100, Math.ceil(this.worldSize / this.cellSize)));
     this.grid = this.initializeGrid();
-    this.despawnTime = 30000; // 30 seconds
+    this.despawnTime = 30000;
     this.lastSpawnTime = Date.now();
-    this.spawnCooldown = 1000; // 1 second
+    this.spawnCooldown = 1000;
     this.foodTypes = FOOD_TYPES;
-    this.ejectedMassDecayTime = 10000; // 10 seconds
+    this.ejectedMassDecayTime = 10000;
     this.maxFoodPerCell = 5;
     this.minDistanceBetweenFood = 20;
     this.lastCleanupTime = Date.now();
-    this.cleanupInterval = 5000; // 5 seconds
+    this.cleanupInterval = 5000;
 
     logger.info('FoodSystem initialized', {
       worldSize: this.worldSize,
@@ -58,8 +60,33 @@ export class FoodSystem {
       maxFoodPerPlayer,
       maxTotalFood: this.maxTotalFood,
       cellSize: this.cellSize,
+      gridSize: this.gridSize,
       foodTypes: Object.keys(this.foodTypes)
     });
+  }
+
+  initializeGrid() {
+    try {
+      return Array(this.gridSize).fill(null).map(() => 
+        Array(this.gridSize).fill(null).map(() => new Set())
+      );
+    } catch (error) {
+      logger.error('Failed to initialize food grid', {
+        gridSize: this.gridSize,
+        worldSize: this.worldSize,
+        cellSize: this.cellSize,
+        error: error.message
+      });
+      // Fallback to a smaller grid if initialization fails
+      this.gridSize = 50;
+      return Array(this.gridSize).fill(null).map(() => 
+        Array(this.gridSize).fill(null).map(() => new Set())
+      );
+    }
+  }
+
+  getAllFood() {
+    return Array.from(this.foodItems.values());
   }
 
   update(playerCount) {
@@ -282,13 +309,6 @@ export class FoodSystem {
     return food;
   }
 
-  initializeGrid() {
-    const gridSize = Math.ceil(this.worldSize / this.cellSize);
-    return Array(gridSize).fill(null).map(() => 
-      Array(gridSize).fill(null).map(() => new Set())
-    );
-  }
-
   clear() {
     const foodCount = this.foodItems.size;
     this.foodItems.clear();
@@ -296,10 +316,6 @@ export class FoodSystem {
     logger.info('Food system cleared', {
       clearedFoodCount: foodCount
     });
-  }
-
-  getAllFood() {
-    return Array.from(this.foodItems.values());
   }
 
   getFoodCount() {

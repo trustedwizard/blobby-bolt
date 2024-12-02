@@ -1,22 +1,21 @@
 import { POWER_UP_COMBOS } from '../shared/types/powerups.js';
 
 export class ComboLeaderboardSystem {
-  constructor(io) {
-    this.io = io;
-    this.playerCombos = new Map(); // Track active combos per player
-    this.comboLeaderboard = new Map(); // Track best combos
-    this.comboHistory = new Map(); // Track historical combos
-    this.achievements = new Map(); // Track player achievements
-    this.comboStreaks = new Map(); // Track combo streaks
+  constructor() {
+    this.playerCombos = new Map();
+    this.comboLeaderboard = new Map();
+    this.comboHistory = new Map();
+    this.achievements = new Map();
+    this.comboStreaks = new Map();
     this.lastUpdate = Date.now();
-    this.updateInterval = 1000; // Update leaderboard every second
-    this.maxHistoryPerPlayer = 50; // Maximum combo history per player
-    this.maxLeaderboardEntries = 100; // Maximum leaderboard entries
-    this.streakThreshold = 3; // Number of combos needed for a streak
-    this.comboCooldown = 5000; // 5 seconds cooldown between combos
+    this.updateInterval = 1000;
+    this.maxHistoryPerPlayer = 50;
+    this.maxLeaderboardEntries = 100;
+    this.streakThreshold = 3;
+    this.comboCooldown = 5000;
   }
 
-  update() {
+  update(players) {
     const now = Date.now();
     if (now - this.lastUpdate < this.updateInterval) return;
     this.lastUpdate = now;
@@ -26,9 +25,15 @@ export class ComboLeaderboardSystem {
     
     // Update leaderboard
     this.updateLeaderboard();
-    
-    // Emit updated leaderboard
-    this.emitLeaderboardUpdate();
+  }
+
+  reset() {
+    this.playerCombos.clear();
+    this.comboLeaderboard.clear();
+    this.comboHistory.clear();
+    this.achievements.clear();
+    this.comboStreaks.clear();
+    this.lastUpdate = Date.now();
   }
 
   handlePowerUpActivation(playerId, powerUpType) {

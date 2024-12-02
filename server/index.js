@@ -7,10 +7,13 @@ import { GameStateManager } from './systems/GameStateManager.js';
 import { ComboLeaderboardSystem } from './comboLeaderboardSystem.js';
 import { FoodSystem } from './foodSystem.js';
 import { AISystem } from './aiSystem.js';
-import PowerUpSystem from './powerUpSystem.js';
 import { performance } from 'perf_hooks';
 import { config } from './utils/config.js';
 import { logger } from './utils/logger.js';
+import { PowerUpSystem } from './powerUpSystem.js';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const app = express();
 const httpServer = createServer(app);
@@ -20,7 +23,7 @@ app.use(cors());
 
 const io = new Server(httpServer, {
   cors: {
-    origin: config.corsOrigin,
+    origin: process.env.CLIENT_URL || config.corsOrigin,
     methods: ["GET", "POST"],
     credentials: true
   }
@@ -36,10 +39,13 @@ const collisionSystem = new CollisionSystem(config.worldSize);
 const foodSystem = new FoodSystem(config.worldSize);
 const comboSystem = new ComboLeaderboardSystem();
 const aiSystem = new AISystem(config.worldSize);
-const powerUpSystem = new PowerUpSystem(io, gameState);
+const powerUpSystem = new PowerUpSystem(config.worldSize);
 
 // Performance monitoring
 let lastUpdateTime = performance.now();
+let lastPlayerLogTime = Date.now();
+const PLAYER_LOG_INTERVAL = 5000; // Log player stats every 5 seconds
+
 const performanceMetrics = {
   lastTickTime: 0,
   tickCount: 0,
@@ -87,8 +93,8 @@ function manageAIPlayers() {
 
 function handleCollisions() {
   const collisions = collisionSystem.checkCollisions(
-    gameState.getPlayers(),
-    foodSystem.getAllFood()
+    Array.from(gameState.players.values()),
+    Array.from(foodSystem.getAllFood())
   );
 
   for (const collision of collisions) {
@@ -165,7 +171,7 @@ const handleSystemError = async (systemName, error) => {
   try {
     switch (systemName) {
       case 'gameState':
-        await gameState.recover();
+        gameState.update();
         break;
       case 'food':
         foodSystem.clear();
@@ -224,7 +230,7 @@ const performHealthCheck = () => {
   return systemHealth;
 };
 
-// Add to the game update loop
+// Game update loop
 const gameLoop = async () => {
   const now = performance.now();
   const deltaTime = (now - lastUpdateTime) / 1000;
@@ -232,15 +238,18 @@ const gameLoop = async () => {
   try {
     // Update game systems with error boundaries
     await withErrorBoundary('gameState', async () => {
-      gameState.update(deltaTime);
-      const realPlayerCount = gameState.getRealPlayerCount();
+      gameState.update();
       
-      // Log player count for monitoring
-      logger.info('Player Update:', {
-        realPlayers: realPlayerCount,
-        aiPlayers: gameState.getAIPlayerCount(),
-        totalPlayers: gameState.getPlayers().size
-      });
+      // Rate limit player logging
+      const currentTime = Date.now();
+      if (currentTime - lastPlayerLogTime >= PLAYER_LOG_INTERVAL) {
+        logger.info('Player Update:', {
+          realPlayers: gameState.getRealPlayerCount(),
+          aiPlayers: gameState.getAIPlayerCount(),
+          totalPlayers: gameState.players.size
+        });
+        lastPlayerLogTime = currentTime;
+      }
     });
 
     await withErrorBoundary('food', async () => {
@@ -258,22 +267,18 @@ const gameLoop = async () => {
     }
 
     await withErrorBoundary('collision', async () => {
-      const collisions = collisionSystem.checkCollisions(
-        gameState.getPlayers(),
-        foodSystem.getAllFood()
-      );
-      handleCollisions(collisions);
+      handleCollisions();
     });
 
     await withErrorBoundary('combo', async () => {
-      comboSystem.update(gameState.getPlayers());
+      comboSystem.update(Array.from(gameState.players.values()));
     });
 
-    // Broadcast game state
+    // Broadcast game state at a fixed rate
     io.emit('game:state', {
-      players: gameState.getPlayers(),
-      food: foodSystem.getAllFood(),
-      leaderboard: comboSystem.getLeaderboard(),
+      players: Array.from(gameState.players.values()),
+      food: Array.from(foodSystem.getAllFood()),
+      leaderboard: gameState.leaderboard,
       powerUps: powerUpSystem.getActivePowerUps(),
       timestamp: Date.now()
     });
@@ -288,6 +293,11 @@ const gameLoop = async () => {
   lastUpdateTime = now;
 };
 
+// Start the game loop with a fixed tick rate
+const TICK_RATE = config.tickRate || 60;
+const TICK_INTERVAL = Math.floor(1000 / TICK_RATE);
+const gameLoopInterval = setInterval(gameLoop, TICK_INTERVAL);
+
 // Add health check interval
 setInterval(performHealthCheck, 30000);
 
@@ -299,7 +309,7 @@ app.get('/metrics', (req, res) => {
     uptime: process.uptime(),
     memory: process.memoryUsage(),
     players: {
-      total: gameState.getPlayers().size,
+      total: gameState.players.size,
       real: gameState.getRealPlayerCount(),
       ai: gameState.getAIPlayerCount()
     }
@@ -312,9 +322,6 @@ const gracefulShutdown = async () => {
   
   // Stop game loop
   clearInterval(gameLoopInterval);
-  
-  // Save any necessary state
-  await gameState.saveState();
   
   // Disconnect all players
   io.emit('server:shutdown');
@@ -330,7 +337,7 @@ const gracefulShutdown = async () => {
 process.on('SIGTERM', gracefulShutdown);
 process.on('SIGINT', gracefulShutdown);
 
-// Start the server with all improvements
+// Start the server
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
   logger.info(`Server running on port ${PORT}`);

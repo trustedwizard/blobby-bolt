@@ -70,11 +70,12 @@ const POWER_UP_TYPES = {
 
 export class PowerUpSystem {
   constructor(worldSize = config.worldSize) {
-    this.worldSize = worldSize;
+    this.worldSize = Math.max(1000, Math.min(10000, Number(worldSize) || 4000));
     this.powerUps = new Map();
     this.activeEffects = new Map();
-    this.grid = this.initializeGrid();
     this.cellSize = 100;
+    this.gridSize = Math.max(1, Math.min(100, Math.ceil(this.worldSize / this.cellSize)));
+    this.grid = this.initializeGrid();
     this.spawnInterval = config.powerUpSpawnInterval || 5000;
     this.maxPowerUps = config.maxPowerUps || 20;
     this.minDistance = 100;
@@ -84,9 +85,21 @@ export class PowerUpSystem {
     logger.info('PowerUpSystem initialized', {
       worldSize: this.worldSize,
       cellSize: this.cellSize,
+      gridSize: this.gridSize,
       spawnInterval: this.spawnInterval,
       maxPowerUps: this.maxPowerUps
     });
+  }
+
+  getActivePowerUps() {
+    return Array.from(this.powerUps.values());
+  }
+
+  clear() {
+    this.powerUps.clear();
+    this.activeEffects.clear();
+    this.grid = this.initializeGrid();
+    this.lastSpawnTime = Date.now();
   }
 
   update() {
@@ -328,21 +341,22 @@ export class PowerUpSystem {
   }
 
   initializeGrid() {
-    const gridSize = Math.ceil(this.worldSize / this.cellSize);
-    return Array(gridSize).fill(null).map(() => 
-      Array(gridSize).fill(null).map(() => new Set())
-    );
-  }
-
-  clear() {
-    const powerUpCount = this.powerUps.size;
-    this.powerUps.clear();
-    this.activeEffects.clear();
-    this.grid = this.initializeGrid();
-    
-    logger.info('Power-up system cleared', {
-      clearedPowerUps: powerUpCount
-    });
+    try {
+      return Array(this.gridSize).fill(null).map(() => 
+        Array(this.gridSize).fill(null).map(() => new Set())
+      );
+    } catch (error) {
+      logger.error('Failed to initialize power-up grid', {
+        gridSize: this.gridSize,
+        worldSize: this.worldSize,
+        cellSize: this.cellSize,
+        error: error.message
+      });
+      this.gridSize = 50;
+      return Array(this.gridSize).fill(null).map(() => 
+        Array(this.gridSize).fill(null).map(() => new Set())
+      );
+    }
   }
 
   getPowerUps() {
