@@ -1,16 +1,27 @@
+import { BaseSystem } from './BaseSystem';
+
 interface GPUInfo {
   renderer: string;
   vendor: string;
 }
 
-export class QualityManager {
+export class QualityManager extends BaseSystem {
+  protected static override instance: QualityManager;
   private quality: 'low' | 'medium' | 'high' = 'high';
   private fps: number[] = [];
   private lastCheck = Date.now();
-  private checkInterval = 1000; // Check every second
+  private checkInterval = 1000;
 
-  constructor() {
+  private constructor() {
+    super();
     this.detectInitialQuality();
+  }
+
+  public static override getInstance(): QualityManager {
+    if (!QualityManager.instance) {
+      QualityManager.instance = new QualityManager();
+    }
+    return QualityManager.instance;
   }
 
   private detectInitialQuality() {
@@ -124,5 +135,11 @@ export class QualityManager {
       detail: settings 
     });
     document.dispatchEvent(event);
+  }
+
+  protected override cleanupResources(): void {
+    this.quality = 'high';
+    this.fps = [];
+    this.lastCheck = Date.now();
   }
 } 

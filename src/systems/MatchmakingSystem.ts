@@ -12,13 +12,14 @@ interface MatchmakingPreferences {
 }
 
 export class MatchmakingSystem extends BaseSystem {
+  protected static override instance: MatchmakingSystem;
   private socket: Socket | null = null;
 
-  public static getInstance(): MatchmakingSystem {
+  public static override getInstance(): MatchmakingSystem {
     if (!MatchmakingSystem.instance) {
       MatchmakingSystem.instance = new MatchmakingSystem();
     }
-    return MatchmakingSystem.instance as MatchmakingSystem;
+    return MatchmakingSystem.instance;
   }
 
   public setSocket(socket: Socket) {

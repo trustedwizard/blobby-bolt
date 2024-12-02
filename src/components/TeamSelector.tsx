@@ -1,6 +1,6 @@
 import React from 'react';
 import { useGameStore } from '../store/gameStore';
-import { Team, Room } from '../types/game';
+import { Team } from '../types/game';
 import { Users } from 'lucide-react';
 
 export function TeamSelector() {

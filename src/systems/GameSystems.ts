@@ -1,6 +1,7 @@
 import { MapSystem } from './MapSystem';
 import { QualityManager } from './QualityManager';
 import { PerformanceMonitor } from '../utils/performance';
+import { BaseSystem } from './BaseSystem';
 
 interface QualitySettings {
   particleCount: number;
@@ -10,29 +11,35 @@ interface QualitySettings {
   effectDetail: 'low' | 'medium' | 'high';
 }
 
-export class GameSystems {
-  private static instance: GameSystems;
+export class GameSystems extends BaseSystem {
+  protected static override instance: GameSystems;
   private mapSystem: MapSystem;
   private qualityManager: QualityManager;
   private lastFrameTime: number = 0;
+  private qualityChangeListener: EventListener;
 
   private constructor() {
-    this.mapSystem = new MapSystem(4000); // World size of 4000
-    this.qualityManager = new QualityManager();
+    super();
+    this.mapSystem = MapSystem.getInstance(4000);
+    this.qualityManager = QualityManager.getInstance();
+    this.qualityChangeListener = this.handleQualityChange.bind(this);
     this.initializeEventListeners();
   }
 
-  public static getInstance(): GameSystems {
+  public static override getInstance(): GameSystems {
     if (!GameSystems.instance) {
       GameSystems.instance = new GameSystems();
     }
     return GameSystems.instance;
   }
 
+  private handleQualityChange(event: Event): void {
+    const customEvent = event as CustomEvent<QualitySettings>;
+    this.applyQualitySettings(customEvent.detail);
+  }
+
   private initializeEventListeners() {
-    document.addEventListener('quality-changed', ((event: CustomEvent<QualitySettings>) => {
-      this.applyQualitySettings(event.detail);
-    }) as EventListener);
+    document.addEventListener('quality-changed', this.qualityChangeListener);
   }
 
   public update(viewport: { x: number; y: number; width: number; height: number }) {
@@ -74,6 +81,13 @@ export class GameSystems {
       detail: settings 
     });
     document.dispatchEvent(event);
+  }
+
+  protected override cleanupResources(): void {
+    document.removeEventListener('quality-changed', this.qualityChangeListener);
+    this.lastFrameTime = 0;
+    this.mapSystem = MapSystem.getInstance(4000);
+    this.qualityManager = QualityManager.getInstance();
   }
 }
 

@@ -18,17 +18,17 @@ interface BounceEffect {
 }
 
 export class ObstacleSystem extends BaseSystem {
-  protected static instance: ObstacleSystem | null = null;
+  protected static override instance: ObstacleSystem;
   private obstacles: Map<string, Obstacle> = new Map();
   private readonly BOUNCE_FORCE = 5;
   private readonly COLLISION_ELASTICITY = 0.6;
 
-  protected constructor() {
+  private constructor() {
     super();
     this.generateObstacles();
   }
 
-  public static getInstance(): ObstacleSystem {
+  public static override getInstance(): ObstacleSystem {
     if (!ObstacleSystem.instance) {
       ObstacleSystem.instance = new ObstacleSystem();
     }

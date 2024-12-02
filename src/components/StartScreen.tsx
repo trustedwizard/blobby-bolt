@@ -5,8 +5,6 @@ import { CircleDot, Loader2 } from 'lucide-react';
 import { RoomList } from './RoomList';
 import { TeamSelector } from './TeamSelector';
 import { socketService } from '../services/socket';
-import { CONFIG } from '../constants/gameConfig';
-import { Blob } from '../types/common';
 import { ErrorBoundary } from './ErrorBoundary';
 
 const COLORS = [
@@ -54,7 +52,7 @@ const StartScreen = memo(() => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { initializePlayer, startGame, joinRoom, addNotification } = useGameStore();
+  const { joinRoom, addNotification } = useGameStore();
 
   useEffect(() => {
     const cleanup = socketService.setupMatchmakingListeners({
@@ -109,29 +107,6 @@ const StartScreen = memo(() => {
     return true;
   }, [formState.playerName]);
 
-  const handleStart = useCallback(() => {
-    if (!validateForm()) return;
-
-    const playerData: Partial<Blob> = {
-      name: formState.playerName.trim(),
-      color: formState.selectedColor,
-      emoji: formState.emoji,
-      x: CONFIG.game.worldSize / 2,
-      y: CONFIG.game.worldSize / 2,
-      radius: CONFIG.physics.minBlobSize,
-      mass: CONFIG.physics.startingMass,
-      score: 0,
-      trail: [],
-      velocity: { x: 0, y: 0 },
-      spawnTime: Date.now(),
-      lastUpdateTime: Date.now(),
-      lastRadius: CONFIG.physics.minBlobSize
-    };
-
-    initializePlayer(playerData);
-    startGame();
-  }, [formState, initializePlayer, startGame, validateForm]);
-
   const startMatchmaking = useCallback(() => {
     if (!validateForm()) return;
     
@@ -147,19 +122,6 @@ const StartScreen = memo(() => {
     setIsMatchmaking(false);
     socketService.cancelMatchmaking();
   }, []);
-
-  const handleCreateRoom = useCallback(() => {
-    if (!validateForm()) return;
-    
-    setIsLoading(true);
-    setError(null);
-    socketService.createRoom({
-      name: formState.playerName,
-      isPrivate: false,
-      gameMode: 'ffa',
-      maxPlayers: 10
-    });
-  }, [formState.playerName, validateForm]);
 
   return (
     <ErrorBoundary>

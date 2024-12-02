@@ -4,13 +4,14 @@ import { DEFAULT_EFFECT_CONFIG } from '../types/effects';
 
 // Core game configuration
 export const GAME_CONFIG: GameConfig = {
-  worldSize: 5000,
+  worldSize: 4000, // Synchronized with server config
   maxPlayers: 50,
   minPlayers: 2,
   startDelay: 5000,
   roundTime: 600000, // 10 minutes
   spawnProtectionTime: 5000,
   respawnDelay: 3000,
+  initialRadius: 25,
   maxBlobSize: 500,
   minSplitSize: 35,
   splitForce: 750,
@@ -18,8 +19,8 @@ export const GAME_CONFIG: GameConfig = {
   friction: 0.02,
   tickRate: 60,
   mapBounds: {
-    width: 5000,
-    height: 5000
+    width: 4000, // Synchronized with worldSize
+    height: 4000
   }
 };
 
@@ -37,12 +38,7 @@ export const PHYSICS_CONFIG = {
   bounceReduction: 0.8,
   wallBounceForce: 10,
   minBlobSize: 30,
-  startingMass: 100,
-  maxBlobSize: 500,
-  minSplitSize: 35,
-  splitForce: 750,
-  ejectForce: 500,
-  friction: 0.02
+  startingMass: 100
 };
 
 // Scoring configuration
@@ -55,6 +51,101 @@ export const SCORING_CONFIG = {
   comboTimeout: 5000,
   leaderboardSize: 10,
   achievementPoints: 50
+};
+
+// Food configuration (shared with server)
+export const FOOD_CONFIG = {
+  types: {
+    NORMAL: { 
+      chance: 0.7, 
+      points: 1, 
+      growth: 1.005,
+      size: 10,
+      color: 0xFFFFFF
+    },
+    SUPER: { 
+      chance: 0.2, 
+      points: 2, 
+      growth: 1.008,
+      size: 15,
+      color: 0xFFAA00
+    },
+    MEGA: { 
+      chance: 0.08, 
+      points: 5, 
+      growth: 1.015,
+      size: 20,
+      color: 0xFF5500
+    },
+    ULTRA: { 
+      chance: 0.02, 
+      points: 10, 
+      growth: 1.025,
+      size: 25,
+      color: 0xFF0000
+    }
+  },
+  spawnRate: 50, // Food items per second
+  maxFood: 1000
+};
+
+// Obstacle configuration (shared with server)
+export const OBSTACLE_CONFIG = {
+  types: {
+    WALL: {
+      name: 'Wall',
+      solid: true,
+      destructible: false,
+      damage: 0,
+      bounceForce: 1,
+      color: 0x808080,
+      defaultWidth: 100,
+      defaultHeight: 20
+    },
+    SPIKE: {
+      name: 'Spike',
+      solid: true,
+      destructible: false,
+      damage: 25,
+      bounceForce: 0.5,
+      color: 0xFF0000,
+      defaultWidth: 30,
+      defaultHeight: 30
+    },
+    BREAKABLE: {
+      name: 'Breakable',
+      solid: true,
+      destructible: true,
+      health: 100,
+      damage: 0,
+      bounceForce: 0.8,
+      color: 0xA0522D,
+      defaultWidth: 50,
+      defaultHeight: 50
+    },
+    SLIME: {
+      name: 'Slime',
+      solid: false,
+      destructible: false,
+      damage: 0,
+      speedMultiplier: 0.5,
+      color: 0x00FF00,
+      defaultWidth: 80,
+      defaultHeight: 80
+    },
+    TELEPORTER: {
+      name: 'Teleporter',
+      solid: false,
+      destructible: false,
+      damage: 0,
+      cooldown: 5000,
+      color: 0x9400D3,
+      defaultWidth: 40,
+      defaultHeight: 40
+    }
+  },
+  maxObstacles: 50,
+  minDistanceFromSpawn: 500
 };
 
 // Team configuration
@@ -119,5 +210,7 @@ export const CONFIG = {
   powerUps: DEFAULT_POWER_UP_CONFIG,
   effects: DEFAULT_EFFECT_CONFIG,
   teams: TEAM_CONFIG,
-  gameModes: GAME_MODES
+  gameModes: GAME_MODES,
+  food: FOOD_CONFIG,
+  obstacles: OBSTACLE_CONFIG
 }; 

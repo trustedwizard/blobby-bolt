@@ -1,4 +1,5 @@
 import * as PIXI from 'pixi.js';
+import { BaseSystem } from './BaseSystem';
 
 interface MemoryThresholds {
   critical: number;
@@ -64,27 +65,27 @@ class FallbackRegistry<T> {
 // Use the global FinalizationRegistry if available, otherwise use our fallback
 const Registry = (globalThis as any).FinalizationRegistry || FallbackRegistry;
 
-export class MemoryManager {
-  private static instance: MemoryManager;
+export class MemoryManager extends BaseSystem {
+  protected static override instance: MemoryManager;
   private readonly thresholds: MemoryThresholds;
-  private readonly CHECK_INTERVAL = 5000; // Check every 5 seconds
+  private readonly CHECK_INTERVAL = 5000;
   private disposableCache: Map<string, CacheRef<any>> = new Map();
   private textureCache: Map<string, CacheRef<PIXI.Texture>> = new Map();
   private registry: InstanceType<FinalizationRegistryType<string>>;
   private lastCleanup: number = 0;
   private cleanupInterval: number | null = null;
   private readonly MAX_TEXTURE_SIZE = 512;
-  private readonly CLEANUP_INTERVAL = 30000; // 30 seconds
-  private readonly MEMORY_LIMIT = 800 * 1024 * 1024; // 800MB
+  private readonly CLEANUP_INTERVAL = 30000;
+  private readonly MEMORY_LIMIT = 800 * 1024 * 1024;
 
   private constructor() {
+    super();
     this.thresholds = {
-      critical: 0.9, // 90% of available memory
-      high: 0.8,     // 80% of available memory
-      normal: 0.7    // 70% of available memory
+      critical: 0.9,
+      high: 0.8,
+      normal: 0.7
     };
 
-    // Initialize registry with cleanup callback
     this.registry = new Registry((key: string) => {
       this.disposableCache.delete(key);
       this.textureCache.delete(key);
@@ -93,7 +94,7 @@ export class MemoryManager {
     this.startMonitoring();
   }
 
-  public static getInstance(): MemoryManager {
+  public static override getInstance(): MemoryManager {
     if (!MemoryManager.instance) {
       MemoryManager.instance = new MemoryManager();
     }
@@ -292,20 +293,15 @@ export class MemoryManager {
     }));
   }
 
-  public dispose(): void {
-    // Clear monitoring interval
+  protected override cleanupResources(): void {
     if (this.cleanupInterval !== null) {
       clearInterval(this.cleanupInterval);
       this.cleanupInterval = null;
     }
-
-    // Clear caches
     this.forceClearCaches();
-
-    // Cleanup registry
-    if ('unregister' in this.registry) {
-      this.registry.unregister(this);
-    }
+    this.lastCleanup = 0;
+    this.disposableCache.clear();
+    this.textureCache.clear();
   }
 }
 

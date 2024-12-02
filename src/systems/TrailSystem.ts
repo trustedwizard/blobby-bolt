@@ -10,19 +10,19 @@ interface TrailEffect {
 }
 
 export class TrailSystem extends BaseSystem {
+  protected static override instance: TrailSystem;
   private trails: Map<string, TrailEffect> = new Map();
   private readonly MAX_TRAIL_LENGTH = 20;
 
-  public static getInstance(): TrailSystem {
+  private constructor() {
+    super();
+  }
+
+  public static override getInstance(): TrailSystem {
     if (!TrailSystem.instance) {
       TrailSystem.instance = new TrailSystem();
     }
-    return TrailSystem.instance as TrailSystem;
-  }
-
-  public dispose(): void {
-    this.trails.clear();
-    TrailSystem.instance = undefined;
+    return TrailSystem.instance;
   }
 
   public removeTrail(blobId: string): void {
@@ -62,7 +62,7 @@ export class TrailSystem extends BaseSystem {
     return this.trails.get(blobId);
   }
 
-  protected cleanupResources(): void {
+  protected override cleanupResources(): void {
     this.trails.clear();
   }
 } 

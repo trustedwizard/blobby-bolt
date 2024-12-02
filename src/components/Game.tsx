@@ -3,6 +3,7 @@ import { Application } from 'pixi.js';
 import { useGameStore } from '../store/gameStore';
 import { PowerUpVisualEffect, CollisionEffect } from '../types/effects';
 import { CONFIG } from '../constants/gameConfig';
+import { POWER_UP_PROPERTIES } from '../types/powerups';
 import { VisualEffectsSystem } from '../systems/VisualEffectsSystem';
 import { GameLoop } from '../systems/GameLoop';
 import { useMediaQuery } from '../hooks/useMediaQuery';
@@ -17,6 +18,48 @@ export const Game = memo(() => {
   const gameLoop = useRef<GameLoop>();
   const [isLoading, setIsLoading] = useState(true);
   const isMobile = useMediaQuery('(max-width: 768px)');
+  const socket = useGameStore(state => state.socket);
+
+  // Effect handlers
+  const createEffect = useCallback((effect: PowerUpVisualEffect | CollisionEffect, type: 'powerUp' | 'collision') => {
+    if (!visualEffects.current) {
+      console.warn(`Cannot create ${type} effect: Visual effects system not initialized`);
+      return;
+    }
+
+    try {
+      switch (type) {
+        case 'powerUp':
+          const powerUpEffect = effect as PowerUpVisualEffect;
+          visualEffects.current.createPowerUpEffect(
+            { x: powerUpEffect.position.x, y: powerUpEffect.position.y },
+            POWER_UP_PROPERTIES[powerUpEffect.powerUpType].color
+          );
+          break;
+        case 'collision':
+          const collisionEffect = effect as CollisionEffect;
+          visualEffects.current.createCollisionEffect(
+            { x: collisionEffect.position.x, y: collisionEffect.position.y },
+            CONFIG.effects.colors[collisionEffect.type]
+          );
+          break;
+      }
+    } catch (error) {
+      console.error(`Error creating ${type} effect:`, error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!socket) return;
+
+    socket.on('effect', (effect: PowerUpVisualEffect | CollisionEffect) => {
+      createEffect(effect, 'powerup_collect' in effect ? 'powerUp' : 'collision');
+    });
+
+    return () => {
+      socket.off('effect');
+    };
+  }, [socket, createEffect]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -34,7 +77,7 @@ export const Game = memo(() => {
       appRef.current = app;
 
       // Initialize game systems
-      visualEffects.current = new VisualEffectsSystem();
+      visualEffects.current = VisualEffectsSystem.getInstance();
       visualEffects.current.init(app, CONFIG.effects);
       gameLoop.current = new GameLoop();
       gameLoop.current.init(app);
@@ -57,35 +100,6 @@ export const Game = memo(() => {
       window.removeEventListener('resize', handleResize);
       appRef.current?.destroy(true);
     };
-  }, []);
-
-  // Effect handlers
-  const createEffect = useCallback((effect: PowerUpVisualEffect | CollisionEffect, type: 'powerUp' | 'collision') => {
-    if (!visualEffects.current) {
-      console.warn(`Cannot create ${type} effect: Visual effects system not initialized`);
-      return;
-    }
-
-    try {
-      switch (type) {
-        case 'powerUp':
-          const powerUpEffect = effect as PowerUpVisualEffect;
-          visualEffects.current.createPowerUpEffect(
-            { x: powerUpEffect.position.x, y: powerUpEffect.position.y },
-            CONFIG.effects.colors[powerUpEffect.type]
-          );
-          break;
-        case 'collision':
-          const collisionEffect = effect as CollisionEffect;
-          visualEffects.current.createCollisionEffect(
-            { x: collisionEffect.position.x, y: collisionEffect.position.y },
-            CONFIG.effects.colors[collisionEffect.type]
-          );
-          break;
-      }
-    } catch (error) {
-      console.error(`Error creating ${type} effect:`, error);
-    }
   }, []);
 
   if (isLoading) {

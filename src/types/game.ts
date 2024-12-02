@@ -1,4 +1,4 @@
-import { EntityBase, Position, Velocity } from './common';
+import { EntityBase } from './common';
 
 export type GameMode = 'ffa' | 'teams' | 'battle-royale' | 'capture' | 'survival';
 
@@ -10,6 +10,7 @@ export interface GameConfig {
   roundTime: number;
   spawnProtectionTime: number;
   respawnDelay: number;
+  initialRadius: number;
   maxBlobSize: number;
   minSplitSize: number;
   splitForce: number;

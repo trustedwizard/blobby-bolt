@@ -1,7 +1,6 @@
 import create from 'zustand';
 import { Socket } from 'socket.io-client';
-import { socketService } from '../services/socket';
-import { PowerUpType, PowerUpCombo, POWER_UP_COMBOS, DEFAULT_POWER_UP_CONFIG } from '../types/powerups';
+import { PowerUpType, PowerUpCombo, POWER_UP_COMBOS } from '../types/powerups';
 import { CONFIG } from '../constants/gameConfig';
 import { Blob, Position, GameState } from '../types/common';
 import { soundService } from '../services/soundService';
@@ -51,6 +50,8 @@ interface GameStore extends GameState {
   ejectMass: () => void;
   createRoom: (roomConfig: Partial<Room>) => void;
   leaveRoom: () => void;
+  activatePowerUp: (id: string) => void;
+  setBoost: (active: boolean) => void;
 }
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -200,6 +201,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { socket } = get();
     if (socket) {
       socket.emit('leave-room');
+    }
+  },
+
+  activatePowerUp: (id: string) => {
+    const { socket } = get();
+    if (socket) {
+      socket.emit('activate-powerup', { id });
+    }
+  },
+
+  setBoost: (active: boolean) => {
+    const { socket } = get();
+    if (socket) {
+      socket.emit('boost', { active });
     }
   }
 }));

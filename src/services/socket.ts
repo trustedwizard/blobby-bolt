@@ -1,9 +1,5 @@
 import io, { Socket } from 'socket.io-client';
 import { useGameStore } from '../store/gameStore';
-import { soundService } from '../services/soundService';
-import { CONFIG } from '../constants/gameConfig';
-import { LeaderboardEntry, LeaderboardUpdate, ComboStats } from '../types/leaderboard';
-import { MatchPreferences } from '../types/matchmaking';
 import { PowerUpType } from '../types/powerups';
 
 interface MatchmakingPreferences {

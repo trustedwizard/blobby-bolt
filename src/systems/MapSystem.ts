@@ -1,4 +1,5 @@
 import { Position } from '../types/common';
+import { BaseSystem } from './BaseSystem';
 
 interface GridRegion {
   x: number;
@@ -6,18 +7,27 @@ interface GridRegion {
   objects: Set<string>;
 }
 
-export class MapSystem {
+export class MapSystem extends BaseSystem {
+  protected static override instance: MapSystem;
   private gridSize: number;
   private regions: Map<string, GridRegion>;
   private visibleRegions: Set<string>;
   private worldSize: number;
 
-  constructor(worldSize: number, gridSize: number = 200) {
+  private constructor(worldSize: number, gridSize: number = 200) {
+    super();
     this.worldSize = worldSize;
     this.gridSize = gridSize;
     this.regions = new Map();
     this.visibleRegions = new Set();
     this.initializeGrid();
+  }
+
+  public static override getInstance(worldSize: number = 4000): MapSystem {
+    if (!MapSystem.instance) {
+      MapSystem.instance = new MapSystem(worldSize);
+    }
+    return MapSystem.instance;
   }
 
   private initializeGrid() {
@@ -71,5 +81,10 @@ export class MapSystem {
 
   getVisibleObjects<T extends { id: string; x: number; y: number }>(objects: T[]): T[] {
     return objects.filter(obj => this.isVisible({ x: obj.x, y: obj.y }));
+  }
+
+  protected cleanupResources(): void {
+    this.regions.clear();
+    this.visibleRegions.clear();
   }
 } 

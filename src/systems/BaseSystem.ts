@@ -3,11 +3,12 @@ export abstract class BaseSystem {
 
   protected constructor() {}
 
+  public static getInstance(...args: any[]): BaseSystem {
+    throw new Error('getInstance must be implemented by derived class');
+  }
+
   public dispose(): void {
-    // Cleanup resources
     this.cleanupResources();
-    
-    // Reset instance
     const constructor = this.constructor as typeof BaseSystem;
     constructor.instance = null;
   }

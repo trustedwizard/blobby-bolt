@@ -1,8 +1,7 @@
 import { Application } from 'pixi.js';
 import { useGameStore } from '../store/gameStore';
 import { CONFIG } from '../constants/gameConfig';
-import { Blob, Position } from '../types/common';
-import { socketService } from '../services/socket';
+import { Blob } from '../types/common';
 
 export class GameLoop {
   private app: Application | null = null;

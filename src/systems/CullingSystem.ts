@@ -1,5 +1,6 @@
 import { Position } from '../types/common';
 import { PowerUpType } from '../types/powerups';
+import { BaseSystem } from './BaseSystem';
 
 interface CullableObject {
   id: string;
@@ -13,7 +14,7 @@ interface CullableObject {
   lastCollisionTime?: number;
 }
 
-export class CullingSystem {
+export class CullingSystem extends BaseSystem {
   private baseViewDistance: number;
   private maxViewDistance: number;
   private dynamicCullingEnabled: boolean;
@@ -29,17 +30,25 @@ export class CullingSystem {
     OPPORTUNITY: 0.1
   };
 
-  constructor(
+  private constructor(
     baseViewDistance: number = 1000,
     maxViewDistance: number = 2000,
     initialDynamicCulling: boolean = true,
     performanceThreshold: number = 45 // FPS threshold
   ) {
+    super();
     this.baseViewDistance = baseViewDistance;
     this.maxViewDistance = maxViewDistance;
     this.dynamicCullingEnabled = initialDynamicCulling;
     this.performanceThreshold = performanceThreshold;
     this.currentViewDistance = baseViewDistance;
+  }
+
+  public static getInstance(): CullingSystem {
+    if (!CullingSystem.instance) {
+      CullingSystem.instance = new CullingSystem();
+    }
+    return CullingSystem.instance as CullingSystem;
   }
 
   public getVisibleObjects<T extends CullableObject>(
@@ -139,15 +148,13 @@ export class CullingSystem {
     switch (type) {
       case PowerUpType.SHIELD:
         return playerRadius < 50 ? 2 : 1; // Higher priority when small
-      case PowerUpType.SPEED_BOOST:
+      case PowerUpType.SPEED:
         return 1.5;
-      case PowerUpType.BLOB_MAGNET:
+      case PowerUpType.MASS:
         return playerRadius < 40 ? 1.8 : 1;
-      case PowerUpType.GRAVITY_PULSE:
+      case PowerUpType.GHOST:
         return playerRadius > 100 ? 1.8 : 1;
-      case PowerUpType.TELEPORT:
-        return 1.3;
-      case PowerUpType.SPLIT_BOMB:
+      case PowerUpType.SPLIT:
         return playerRadius > 80 ? 1.6 : 1;
       default:
         return 1;
@@ -180,4 +187,11 @@ export class CullingSystem {
   public setDynamicCullingEnabled(enabled: boolean): void {
     this.dynamicCullingEnabled = enabled;
   }
-} 
+
+  protected cleanupResources(): void {
+    this.currentViewDistance = this.baseViewDistance;
+    this.lastPerformanceCheck = 0;
+  }
+}
+
+export const cullingSystem = CullingSystem.getInstance(); 

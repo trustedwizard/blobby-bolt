@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { PowerUpType, POWER_UP_PROPERTIES } from '../types/powerups';
+import { POWER_UP_PROPERTIES } from '../types/powerups';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 
 interface Props {

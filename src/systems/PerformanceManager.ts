@@ -5,6 +5,7 @@ import { CullingSystem } from './CullingSystem';
 import { MemoryManager } from './MemoryManager';
 import { GameObject } from '../types/gameObjects';
 import * as PIXI from 'pixi.js';
+import { BaseSystem } from './BaseSystem';
 
 interface OptimizationState {
   particleCount: number;
@@ -66,8 +67,8 @@ interface Viewport {
   height: number;
 }
 
-export class PerformanceManager {
-  private static instance: PerformanceManager;
+export class PerformanceManager extends BaseSystem {
+  protected static override instance: PerformanceManager;
   private spatialHash: SpatialHash;
   private particlePool: ObjectPool<PIXI.Graphics>;
   private foodPool: ObjectPool<PIXI.Graphics>;
@@ -77,22 +78,6 @@ export class PerformanceManager {
   private advancedState: AdvancedOptimizationState;
   private updateQueue: PriorityQueue<UpdateEvent>;
   private isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-  private mobileSettings = {
-    maxParticles: 50,
-    trailLength: 10,
-    renderDistance: 1000,
-    maxVisibleBlobs: 20,
-    updateInterval: 50
-  };
-
-  private desktopSettings = {
-    maxParticles: 200,
-    trailLength: 20,
-    renderDistance: 2000,
-    maxVisibleBlobs: 50,
-    updateInterval: 16
-  };
-
   private readonly renderer: PIXI.Renderer;
   private settings: {
     maxParticles: number;
@@ -103,11 +88,28 @@ export class PerformanceManager {
   };
   private updateInterval: number;
 
+  private readonly mobileSettings = {
+    maxParticles: 50,
+    trailLength: 10,
+    renderDistance: 1000,
+    maxVisibleBlobs: 20,
+    updateInterval: 50
+  };
+
+  private readonly desktopSettings = {
+    maxParticles: 200,
+    trailLength: 20,
+    renderDistance: 2000,
+    maxVisibleBlobs: 50,
+    updateInterval: 16
+  };
+
   private constructor(renderer: PIXI.Renderer) {
+    super();
     this.renderer = renderer;
     this.spatialHash = new SpatialHash(200);
     this.memoryManager = MemoryManager.getInstance();
-    this.cullingSystem = new CullingSystem();
+    this.cullingSystem = CullingSystem.getInstance();
     
     // Initialize pools
     this.particlePool = new ObjectPool<PIXI.Graphics>(
@@ -154,7 +156,7 @@ export class PerformanceManager {
     }
   }
 
-  public static getInstance(renderer: PIXI.Renderer): PerformanceManager {
+  public static override getInstance(renderer: PIXI.Renderer): PerformanceManager {
     if (!PerformanceManager.instance) {
       PerformanceManager.instance = new PerformanceManager(renderer);
     }
@@ -413,5 +415,20 @@ export class PerformanceManager {
         return Math.hypot(dx, dy) <= renderDistance;
       })
       .slice(0, maxVisible);
+  }
+
+  protected override cleanupResources(): void {
+    this.particlePool.clear();
+    this.foodPool.clear();
+    this.spatialHash.clear();
+    this.updateQueue = new PriorityQueue<UpdateEvent>();
+    this.optimizationState = {
+      particleCount: 100,
+      trailLength: 20,
+      renderQuality: 'high',
+      cullingDistance: 1000,
+      batchSize: 100,
+      updateFrequency: 16
+    };
   }
 } 

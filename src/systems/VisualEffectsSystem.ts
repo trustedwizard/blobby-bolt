@@ -1,7 +1,8 @@
 import { Application, Container, Graphics } from 'pixi.js';
 import { Position } from '../types/common';
-import { EffectConfig, PowerUpVisualEffect, CollisionEffect } from '../types/effects';
+import { EffectConfig } from '../types/effects';
 import { ObjectPool } from '../utils/objectPool';
+import { BaseSystem } from './BaseSystem';
 
 interface ParticleEffect {
   id: string;
@@ -13,14 +14,16 @@ interface ParticleEffect {
   particles: Graphics[];
 }
 
-export class VisualEffectsSystem {
+export class VisualEffectsSystem extends BaseSystem {
+  protected static override instance: VisualEffectsSystem;
   private app: Application | null = null;
   private container: Container | null = null;
   private config: EffectConfig | null = null;
   private effects: Map<string, ParticleEffect> = new Map();
   private particlePool: ObjectPool<Graphics>;
 
-  constructor() {
+  private constructor() {
+    super();
     this.particlePool = new ObjectPool<Graphics>(
       () => {
         const graphics = new Graphics();
@@ -33,6 +36,13 @@ export class VisualEffectsSystem {
       50,
       200
     );
+  }
+
+  public static override getInstance(): VisualEffectsSystem {
+    if (!VisualEffectsSystem.instance) {
+      VisualEffectsSystem.instance = new VisualEffectsSystem();
+    }
+    return VisualEffectsSystem.instance;
   }
 
   init(app: Application, config: EffectConfig): void {
@@ -147,7 +157,7 @@ export class VisualEffectsSystem {
     this.effects.set(effect.id, effect);
   }
 
-  update(deltaTime: number): void {
+  update(): void {
     const now = Date.now();
 
     for (const [id, effect] of this.effects.entries()) {
@@ -223,7 +233,7 @@ export class VisualEffectsSystem {
     });
   }
 
-  destroy(): void {
+  protected override cleanupResources(): void {
     this.effects.forEach(effect => {
       effect.particles.forEach(particle => {
         particle.destroy();
@@ -234,5 +244,6 @@ export class VisualEffectsSystem {
     this.container?.destroy();
     this.container = null;
     this.app = null;
+    this.config = null;
   }
 } 

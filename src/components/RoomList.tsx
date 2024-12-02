@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useGameStore } from '../store/gameStore';
-import { Room, GameMode, GameConfig } from '../types/game';
-import { Lock, Users, Trophy, Swords } from 'lucide-react';
+import { Room, GameMode } from '../types/game';
+import { Lock, Users, Swords } from 'lucide-react';
 import { CONFIG } from '../constants/gameConfig';
 
 interface RoomListProps {
