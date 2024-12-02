@@ -1,14 +1,10 @@
 export class GameStateManager {
-  constructor(config) {
-    this.worldSize = config.worldSize;
-    this.maxPlayers = config.maxPlayers;
+  constructor({ worldSize, maxPlayers }) {
+    this.worldSize = worldSize;
+    this.maxPlayers = maxPlayers;
     this.players = new Map();
-    this.food = new Map();
-    this.leaderboard = [];
-    this.aiPlayers = new Map();
-    this.teams = new Map();
-    this.lastAIUpdate = Date.now();
-    this.aiUpdateInterval = 100; // Update AI every 100ms
+    this.rooms = new Map();
+    this.aiPlayers = new Set();
   }
 
   addPlayer(id, data) {
@@ -302,5 +298,50 @@ export class GameStateManager {
     }
 
     this.updateLeaderboard();
+  }
+
+  // Room management methods
+  createRoom(roomConfig) {
+    const room = {
+      ...roomConfig,
+      players: new Map(),
+      state: 'waiting',
+      createdAt: Date.now()
+    };
+    this.rooms.set(room.id, room);
+    return room;
+  }
+
+  getRoom(roomId) {
+    return this.rooms.get(roomId);
+  }
+
+  removeRoom(roomId) {
+    return this.rooms.delete(roomId);
+  }
+
+  getRooms() {
+    return Array.from(this.rooms.values());
+  }
+
+  addPlayerToRoom(roomId, playerId, playerData) {
+    const room = this.rooms.get(roomId);
+    if (room) {
+      room.players.set(playerId, playerData);
+      return true;
+    }
+    return false;
+  }
+
+  removePlayerFromRoom(roomId, playerId) {
+    const room = this.rooms.get(roomId);
+    if (room) {
+      room.players.delete(playerId);
+      if (room.players.size === 0) {
+        this.rooms.delete(roomId);
+      }
+      return true;
+    }
+    return false;
   }
 } 

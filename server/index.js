@@ -351,3 +351,74 @@ httpServer.listen(PORT, () => {
     corsOrigin: config.corsOrigin
   });
 });
+
+// Socket.IO connection handling
+io.on('connection', (socket) => {
+  logger.info(`Client connected: ${socket.id}`);
+
+  // Room management
+  socket.on('room:create', (roomConfig) => {
+    try {
+      const room = {
+        ...roomConfig,
+        players: new Map(),
+        state: 'waiting'
+      };
+      
+      gameState.rooms.set(room.id, room);
+      socket.join(room.id);
+      io.emit('room:created', room);
+      logger.info(`Room created: ${room.id}`);
+    } catch (error) {
+      logger.error('Error creating room:', error);
+      socket.emit('room:create:error', 'Failed to create room');
+    }
+  });
+
+  socket.on('room:join', ({ roomId, password }) => {
+    try {
+      const room = gameState.rooms.get(roomId);
+      if (!room) {
+        socket.emit('room:join:error', 'Room not found');
+        return;
+      }
+
+      if (room.isPrivate && room.password !== password) {
+        socket.emit('room:join:error', 'Invalid password');
+        return;
+      }
+
+      if (room.players.size >= room.maxPlayers) {
+        socket.emit('room:join:error', 'Room is full');
+        return;
+      }
+
+      socket.join(roomId);
+      room.players.set(socket.id, { id: socket.id });
+      io.to(roomId).emit('room:player:joined', { playerId: socket.id });
+      logger.info(`Player ${socket.id} joined room ${roomId}`);
+    } catch (error) {
+      logger.error('Error joining room:', error);
+      socket.emit('room:join:error', 'Failed to join room');
+    }
+  });
+
+  socket.on('disconnect', () => {
+    logger.info(`Client disconnected: ${socket.id}`);
+    // Clean up rooms
+    for (const [roomId, room] of gameState.rooms) {
+      if (room.players.has(socket.id)) {
+        room.players.delete(socket.id);
+        io.to(roomId).emit('room:player:left', { playerId: socket.id });
+        
+        // Remove empty rooms
+        if (room.players.size === 0) {
+          gameState.rooms.delete(roomId);
+          io.emit('room:removed', { roomId });
+        }
+      }
+    }
+  });
+
+  // ... rest of the socket event handlers ...
+});

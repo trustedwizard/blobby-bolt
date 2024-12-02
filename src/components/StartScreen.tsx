@@ -51,46 +51,76 @@ const StartScreen = memo(() => {
   const [matchmakingStatus, setMatchmakingStatus] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
 
   const { joinRoom, addNotification } = useGameStore();
 
+  // Initialize socket connection
   useEffect(() => {
-    const cleanup = socketService.setupMatchmakingListeners({
-      onMatchFound: (gameId) => {
-        setIsMatchmaking(false);
-        joinRoom(gameId);
-      },
-      onMatchmakingStatus: (status) => {
-        setMatchmakingStatus(status);
-      },
-      onMatchmakingError: (error) => {
-        setIsMatchmaking(false);
-        setError(error);
-        addNotification(error);
+    const initializeSocket = async () => {
+      try {
+        setIsConnecting(true);
+        await socketService.connect();
+        setIsConnecting(false);
+      } catch (err) {
+        setError('Failed to connect to server. Please try again.');
+        setIsConnecting(false);
       }
-    });
+    };
 
-    return cleanup;
+    initializeSocket();
+  }, []);
+
+  // Setup matchmaking listeners
+  useEffect(() => {
+    const setupListeners = async () => {
+      try {
+        await socketService.setupMatchmakingListeners({
+          onMatchFound: (gameId) => {
+            setIsMatchmaking(false);
+            joinRoom(gameId);
+          },
+          onMatchmakingStatus: (status) => {
+            setMatchmakingStatus(status);
+          },
+          onMatchmakingError: (error) => {
+            setIsMatchmaking(false);
+            setError(error);
+            addNotification(error);
+          }
+        });
+      } catch (err) {
+        setError('Failed to setup game listeners. Please refresh the page.');
+      }
+    };
+
+    setupListeners();
   }, [joinRoom, addNotification]);
 
+  // Setup room event listeners
   useEffect(() => {
-    const handleRoomCreated = (room: any) => {
-      setIsLoading(false);
-      console.log('Room created:', room);
+    const setupRoomListeners = async () => {
+      try {
+        await socketService.on('room:created', (room: any) => {
+          setIsLoading(false);
+          console.log('Room created:', room);
+        });
+
+        await socketService.on('room:join:error', (error: string) => {
+          setIsLoading(false);
+          setError(error);
+          addNotification(error);
+        });
+      } catch (err) {
+        setError('Failed to setup room listeners. Please refresh the page.');
+      }
     };
 
-    const handleRoomError = (error: string) => {
-      setIsLoading(false);
-      setError(error);
-      addNotification(error);
-    };
-
-    socketService.on('room:created', handleRoomCreated);
-    socketService.on('room:join:error', handleRoomError);
+    setupRoomListeners();
 
     return () => {
-      socketService.off('room:created', handleRoomCreated);
-      socketService.off('room:join:error', handleRoomError);
+      socketService.off('room:created');
+      socketService.off('room:join:error');
     };
   }, [addNotification]);
 
@@ -107,21 +137,41 @@ const StartScreen = memo(() => {
     return true;
   }, [formState.playerName]);
 
-  const startMatchmaking = useCallback(() => {
+  const startMatchmaking = useCallback(async () => {
     if (!validateForm()) return;
     
-    setIsMatchmaking(true);
-    setError(null);
-    socketService.findMatch({
-      gameMode: 'ffa',
-      skillLevel: 1000
-    });
+    try {
+      setIsMatchmaking(true);
+      setError(null);
+      await socketService.findMatch({
+        gameMode: 'ffa',
+        skillLevel: 1000
+      });
+    } catch (err) {
+      setError('Failed to start matchmaking. Please try again.');
+      setIsMatchmaking(false);
+    }
   }, [validateForm]);
 
-  const cancelMatchmaking = useCallback(() => {
-    setIsMatchmaking(false);
-    socketService.cancelMatchmaking();
+  const cancelMatchmaking = useCallback(async () => {
+    try {
+      setIsMatchmaking(false);
+      await socketService.cancelMatchmaking();
+    } catch (err) {
+      setError('Failed to cancel matchmaking.');
+    }
   }, []);
+
+  if (isConnecting) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center bg-black">
+        <div className="text-center text-white">
+          <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4" />
+          <p>Connecting to server...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <ErrorBoundary>

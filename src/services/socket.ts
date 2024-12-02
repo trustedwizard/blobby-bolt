@@ -11,6 +11,8 @@ interface MatchmakingPreferences {
 export class SocketService {
   private socket: Socket | null = null;
   private static instance: SocketService;
+  private isInitializing: boolean = false;
+  private initializationPromise: Promise<void> | null = null;
 
   private constructor() {}
 
@@ -25,21 +27,49 @@ export class SocketService {
     return this.socket;
   }
 
-  connect(serverUrl: string = 'http://localhost:3001'): void {
+  async connect(serverUrl: string = 'http://localhost:3001'): Promise<void> {
     if (this.socket?.connected) return;
+    if (this.isInitializing && this.initializationPromise) return this.initializationPromise;
 
-    this.socket = io(serverUrl, {
-      transports: ['websocket'],
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000
+    this.isInitializing = true;
+    this.initializationPromise = new Promise((resolve, reject) => {
+      try {
+        this.socket = io(serverUrl, {
+          transports: ['websocket'],
+          reconnection: true,
+          reconnectionAttempts: 5,
+          reconnectionDelay: 1000,
+          timeout: 10000
+        });
+
+        this.socket.once('connect', () => {
+          console.log('Connected to server');
+          useGameStore.setState({ isConnected: true });
+          this.setupEventHandlers();
+          this.isInitializing = false;
+          resolve();
+        });
+
+        this.socket.once('connect_error', (error) => {
+          console.error('Connection error:', error);
+          useGameStore.setState({ isConnected: false });
+          this.isInitializing = false;
+          reject(error);
+        });
+      } catch (error) {
+        this.isInitializing = false;
+        reject(error);
+      }
     });
 
-    this.setupEventHandlers();
+    return this.initializationPromise;
   }
 
   private setupEventHandlers(): void {
     if (!this.socket) return;
+
+    // Remove any existing listeners
+    this.socket.removeAllListeners();
 
     this.socket.on('connect', () => {
       console.log('Connected to server');
@@ -117,15 +147,22 @@ export class SocketService {
     });
   }
 
-  // Restore matchmaking methods
-  setupMatchmakingListeners(callbacks: {
+  // Matchmaking methods
+  async setupMatchmakingListeners(callbacks: {
     onMatchFound: (gameId: string) => void;
     onMatchmakingStatus: (status: string) => void;
     onMatchmakingError: (error: string) => void;
-  }): void {
+  }): Promise<void> {
     if (!this.socket) {
-      console.warn('Cannot setup matchmaking listeners: Socket not initialized');
-      return;
+      if (!this.isInitializing) {
+        await this.connect();
+      } else {
+        await this.initializationPromise;
+      }
+    }
+
+    if (!this.socket) {
+      throw new Error('Failed to initialize socket connection');
     }
 
     // Remove any existing listeners to prevent duplicates
@@ -155,17 +192,24 @@ export class SocketService {
     this.socket.emit('matchmaking:cancel');
   }
 
-  // Restore room management methods
-  createRoom(roomConfig: {
+  // Room management methods
+  async createRoom(roomConfig: {
     name: string;
     isPrivate: boolean;
     password?: string;
     gameMode: 'ffa' | 'teams' | 'battle-royale';
     maxPlayers: number;
-  }): void {
+  }): Promise<void> {
     if (!this.socket?.connected) {
-      console.warn('Cannot create room: Socket not connected');
-      return;
+      if (!this.isInitializing) {
+        await this.connect();
+      } else {
+        await this.initializationPromise;
+      }
+    }
+
+    if (!this.socket?.connected) {
+      throw new Error('Failed to establish socket connection');
     }
     
     const roomId = `room-${Date.now()}`;
@@ -185,20 +229,36 @@ export class SocketService {
     this.socket.emit('room:join', { roomId, password });
   }
 
-  // Basic socket methods
-  emit(event: string, data?: any): void {
+  // Basic socket methods with auto-connect
+  async emit(event: string, data?: any): Promise<void> {
+    if (!this.socket?.connected) {
+      if (!this.isInitializing) {
+        await this.connect();
+      } else {
+        await this.initializationPromise;
+      }
+    }
+
     if (this.socket?.connected) {
       this.socket.emit(event, data);
     } else {
-      console.warn(`Attempted to emit '${event}' but socket is not connected`);
+      throw new Error(`Failed to emit '${event}': Socket not connected`);
     }
   }
 
-  on<T = any>(event: string, callback: (data: T) => void): void {
+  async on<T = any>(event: string, callback: (data: T) => void): Promise<void> {
+    if (!this.socket) {
+      if (!this.isInitializing) {
+        await this.connect();
+      } else {
+        await this.initializationPromise;
+      }
+    }
+
     if (this.socket) {
       this.socket.on(event, callback);
     } else {
-      console.warn(`Attempted to add listener for '${event}' but socket is not initialized`);
+      throw new Error(`Failed to add listener for '${event}': Socket not initialized`);
     }
   }
 

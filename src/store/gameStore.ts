@@ -1,4 +1,4 @@
-import create from 'zustand';
+import { create } from 'zustand';
 import { Socket } from 'socket.io-client';
 import { PowerUpType, PowerUpCombo, POWER_UP_COMBOS } from '../types/powerups';
 import { CONFIG } from '../constants/gameConfig';
