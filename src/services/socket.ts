@@ -35,15 +35,25 @@ export class SocketService {
     this.isInitializing = true;
     this.initializationPromise = new Promise((resolve, reject) => {
       try {
+        if (this.socket) {
+          this.socket.close();
+          this.socket = null;
+        }
+
+        console.log('Attempting to connect to server:', serverUrl);
+        
         this.socket = io(serverUrl, {
-          transports: ['websocket'],
+          transports: ['polling', 'websocket'],
           reconnection: true,
           reconnectionAttempts: 5,
           reconnectionDelay: 1000,
-          timeout: 10000
+          reconnectionDelayMax: 5000,
+          timeout: 20000,
+          autoConnect: true,
+          path: '/socket.io'
         });
 
-        this.socket.once('connect', () => {
+        this.socket.on('connect', () => {
           console.log('Connected to server');
           useGameStore.setState({ isConnected: true });
           this.setupEventHandlers();
@@ -51,13 +61,56 @@ export class SocketService {
           resolve();
         });
 
-        this.socket.once('connect_error', (error) => {
+        this.socket.on('connect_error', (error) => {
           console.error('Connection error:', error);
           useGameStore.setState({ isConnected: false });
-          this.isInitializing = false;
-          reject(error);
         });
+
+        this.socket.on('disconnect', (reason) => {
+          console.log('Disconnected from server:', reason);
+          useGameStore.setState({ isConnected: false });
+          if (reason === 'io server disconnect') {
+            // Server initiated disconnect, try to reconnect
+            this.socket?.connect();
+          }
+        });
+
+        this.socket.on('reconnect', (attemptNumber) => {
+          console.log('Reconnected to server after', attemptNumber, 'attempts');
+          useGameStore.setState({ isConnected: true });
+        });
+
+        this.socket.on('reconnect_attempt', (attemptNumber) => {
+          console.log('Attempting to reconnect:', attemptNumber);
+        });
+
+        this.socket.on('reconnect_error', (error) => {
+          console.error('Reconnection error:', error);
+        });
+
+        this.socket.on('reconnect_failed', () => {
+          console.error('Failed to reconnect');
+          this.isInitializing = false;
+          reject(new Error('Failed to reconnect to server'));
+        });
+
+        // Add connection timeout
+        const timeoutId = setTimeout(() => {
+          if (!this.socket?.connected) {
+            console.error('Connection timeout');
+            this.socket?.close();
+            this.isInitializing = false;
+            reject(new Error('Connection timeout'));
+          }
+        }, 20000);
+
+        // Clear timeout if connected
+        this.socket.on('connect', () => {
+          clearTimeout(timeoutId);
+        });
+
       } catch (error) {
+        console.error('Socket initialization error:', error);
         this.isInitializing = false;
         reject(error);
       }

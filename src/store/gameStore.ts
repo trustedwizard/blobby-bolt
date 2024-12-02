@@ -192,7 +192,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   createRoom: (roomConfig) => {
     const { socket } = get();
     if (socket) {
-      socket.emit('create-room', roomConfig);
+      socket.emit('room:create', roomConfig);
       
       // Optimistically add room to local state
       set(state => ({

@@ -19,14 +19,22 @@ const app = express();
 const httpServer = createServer(app);
 
 // Configure CORS for both Express and Socket.IO
-app.use(cors());
+app.use(cors({
+  origin: process.env.CLIENT_URL || '*',
+  methods: ['GET', 'POST'],
+  credentials: true
+}));
 
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.CLIENT_URL || config.corsOrigin,
-    methods: ["GET", "POST"],
+    origin: process.env.CLIENT_URL || '*',
+    methods: ['GET', 'POST'],
     credentials: true
-  }
+  },
+  transports: ['websocket', 'polling'],
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  connectTimeout: 10000
 });
 
 // Initialize game systems
@@ -339,124 +347,153 @@ process.on('SIGINT', gracefulShutdown);
 
 // Start the server
 const PORT = process.env.PORT || 3001;
-httpServer.listen(PORT, () => {
-  logger.info(`Server running on port ${PORT}`);
-  logger.info('System configuration:', {
-    nodeEnv: process.env.NODE_ENV,
-    worldSize: config.worldSize,
-    maxPlayers: config.maxPlayers,
-    minPlayers: config.minPlayers,
-    maxAiPlayers: config.maxAiPlayers,
-    tickRate: config.tickRate,
-    corsOrigin: config.corsOrigin
-  });
-});
 
-// Socket.IO connection handling
-io.on('connection', (socket) => {
-  logger.info(`Client connected: ${socket.id}`);
-
-  // Room management
-  socket.on('room:create', (roomConfig) => {
-    try {
-      logger.info('Creating room:', roomConfig);
-      const room = gameState.createRoom(roomConfig);
-      socket.join(room.id);
-      io.emit('room:created', room);
-      logger.info(`Room created: ${room.id}`);
-    } catch (error) {
-      logger.error('Error creating room:', error);
-      socket.emit('room:create:error', 'Failed to create room');
-    }
+try {
+  httpServer.listen(PORT, () => {
+    logger.info(`Server listening on http://localhost:${PORT}`);
+    logger.info('System configuration:', {
+      nodeEnv: process.env.NODE_ENV,
+      worldSize: config.worldSize,
+      maxPlayers: config.maxPlayers,
+      minPlayers: config.minPlayers,
+      maxAiPlayers: config.maxAiPlayers,
+      tickRate: config.tickRate,
+      corsOrigin: process.env.CLIENT_URL || '*'
+    });
   });
 
-  socket.on('room:join', ({ roomId, password, playerData }) => {
-    try {
-      const room = gameState.getRoom(roomId);
-      if (!room) {
-        socket.emit('room:join:error', 'Room not found');
-        return;
-      }
+  // Configure Socket.IO
+  io.on('connection', (socket) => {
+    logger.info(`Client connected: ${socket.id}`);
 
-      if (room.isPrivate && room.password !== password) {
-        socket.emit('room:join:error', 'Invalid password');
-        return;
-      }
+    socket.on('error', (error) => {
+      logger.error(`Socket error for ${socket.id}:`, error);
+    });
 
-      if (room.players.size >= room.maxPlayers) {
-        socket.emit('room:join:error', 'Room is full');
-        return;
+    // Room management
+    socket.on('room:create', (roomConfig) => {
+      try {
+        logger.info('Creating room:', roomConfig);
+        const roomId = `room-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const room = gameState.createRoom({
+          id: roomId,
+          name: roomConfig.name || `Room ${roomId}`,
+          maxPlayers: roomConfig.maxPlayers || config.maxPlayers,
+          isPrivate: roomConfig.isPrivate || false,
+          password: roomConfig.password || '',
+          gameMode: roomConfig.gameMode || 'classic',
+          createdBy: socket.id
+        });
+        socket.join(roomId);
+        io.emit('room:created', room);
+        logger.info(`Room created: ${roomId}`);
+      } catch (error) {
+        logger.error('Error creating room:', error);
+        socket.emit('room:create:error', 'Failed to create room');
       }
+    });
 
-      const player = {
-        id: socket.id,
-        name: playerData.name || `Player ${socket.id}`,
-        isReady: false,
-        isConnected: true,
-        lastPing: Date.now(),
-        stats: {
-          score: 0,
-          kills: 0,
-          deaths: 0,
-          foodEaten: 0,
-          timeAlive: 0,
-          highestMass: 0,
-          maxCombo: 0,
-          powerUpsCollected: 0
+    socket.on('room:join', ({ roomId, password, playerData }) => {
+      try {
+        const room = gameState.getRoom(roomId);
+        if (!room) {
+          socket.emit('room:join:error', 'Room not found');
+          return;
         }
-      };
 
-      socket.join(roomId);
-      gameState.addPlayerToRoom(roomId, socket.id, player);
-      io.to(roomId).emit('room:player:joined', { roomId, playerId: socket.id, player });
-      logger.info(`Player ${socket.id} joined room ${roomId}`);
-    } catch (error) {
-      logger.error('Error joining room:', error);
-      socket.emit('room:join:error', 'Failed to join room');
-    }
-  });
+        if (room.isPrivate && room.password !== password) {
+          socket.emit('room:join:error', 'Invalid password');
+          return;
+        }
 
-  // Game state updates
-  socket.on('player:move', (data) => {
-    const player = gameState.getPlayer(socket.id);
-    if (player) {
-      player.x = data.x;
-      player.y = data.y;
-      player.velocity = data.velocity;
-      socket.broadcast.emit('player:update', player);
-    }
-  });
+        if (room.players.size >= room.maxPlayers) {
+          socket.emit('room:join:error', 'Room is full');
+          return;
+        }
 
-  socket.on('player:split', () => {
-    const player = gameState.getPlayer(socket.id);
-    if (player) {
-      gameState.splitPlayer(socket.id);
-      io.emit('player:split', { playerId: socket.id });
-    }
-  });
+        const player = {
+          id: socket.id,
+          name: playerData.name || `Player ${socket.id}`,
+          isReady: false,
+          isConnected: true,
+          lastPing: Date.now(),
+          stats: {
+            score: 0,
+            kills: 0,
+            deaths: 0,
+            foodEaten: 0,
+            timeAlive: 0,
+            highestMass: 0,
+            maxCombo: 0,
+            powerUpsCollected: 0
+          }
+        };
 
-  socket.on('player:eject', () => {
-    const player = gameState.getPlayer(socket.id);
-    if (player) {
-      gameState.ejectMass(socket.id);
-      io.emit('player:eject', { playerId: socket.id });
-    }
-  });
+        socket.join(roomId);
+        gameState.addPlayerToRoom(roomId, socket.id, player);
+        io.to(roomId).emit('room:player:joined', { roomId, playerId: socket.id, player });
+        logger.info(`Player ${socket.id} joined room ${roomId}`);
+      } catch (error) {
+        logger.error('Error joining room:', error);
+        socket.emit('room:join:error', 'Failed to join room');
+      }
+    });
 
-  socket.on('disconnect', () => {
-    logger.info(`Client disconnected: ${socket.id}`);
-    // Clean up rooms
-    for (const [roomId, room] of gameState.rooms) {
-      if (room.players.has(socket.id)) {
-        gameState.removePlayerFromRoom(roomId, socket.id);
-        io.to(roomId).emit('room:player:left', { roomId, playerId: socket.id });
-        
-        // If room is empty, remove it
-        if (room.players.size === 0) {
-          gameState.removeRoom(roomId);
-          io.emit('room:removed', { roomId });
+    // Game state updates
+    socket.on('player:move', (data) => {
+      const player = gameState.getPlayer(socket.id);
+      if (player) {
+        player.x = data.x;
+        player.y = data.y;
+        player.velocity = data.velocity;
+        socket.broadcast.emit('player:update', player);
+      }
+    });
+
+    socket.on('player:split', () => {
+      const player = gameState.getPlayer(socket.id);
+      if (player) {
+        gameState.splitPlayer(socket.id);
+        io.emit('player:split', { playerId: socket.id });
+      }
+    });
+
+    socket.on('player:eject', () => {
+      const player = gameState.getPlayer(socket.id);
+      if (player) {
+        gameState.ejectMass(socket.id);
+        io.emit('player:eject', { playerId: socket.id });
+      }
+    });
+
+    socket.on('disconnect', () => {
+      logger.info(`Client disconnected: ${socket.id}`);
+      // Clean up rooms
+      for (const [roomId, room] of gameState.rooms) {
+        if (room.players.has(socket.id)) {
+          gameState.removePlayerFromRoom(roomId, socket.id);
+          io.to(roomId).emit('room:player:left', { roomId, playerId: socket.id });
+          
+          // If room is empty, remove it
+          if (room.players.size === 0) {
+            gameState.removeRoom(roomId);
+            io.emit('room:removed', { roomId });
+          }
         }
       }
+    });
+  });
+
+  // Error handling for HTTP server
+  httpServer.on('error', (error) => {
+    logger.error('HTTP Server error:', error);
+    if (error.code === 'EADDRINUSE') {
+      logger.error(`Port ${PORT} is already in use. Please choose a different port or stop the other process.`);
+      process.exit(1);
     }
   });
-});
+
+} catch (error) {
+  logger.error('Failed to start server:', error);
+  process.exit(1);
+}
