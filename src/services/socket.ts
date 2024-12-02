@@ -138,9 +138,11 @@ export class SocketService {
     // Room event handlers
     this.socket.on('room:created', (room: Room) => {
       console.log('Room created:', room);
-      const rooms = new Map(useGameStore.getState().rooms);
-      rooms.set(room.id, room);
-      useGameStore.setState({ rooms });
+      useGameStore.setState(state => {
+        const rooms = new Map(state.rooms);
+        rooms.set(room.id, room);
+        return { rooms };
+      });
     });
 
     this.socket.on('room:removed', ({ roomId }: { roomId: string }) => {

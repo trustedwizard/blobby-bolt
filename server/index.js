@@ -385,7 +385,8 @@ try {
           createdBy: socket.id
         });
         socket.join(roomId);
-        io.emit('room:created', room);
+        socket.emit('room:created', room);
+        socket.broadcast.emit('room:created', room);
         logger.info(`Room created: ${roomId}`);
       } catch (error) {
         logger.error('Error creating room:', error);
